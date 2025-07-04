@@ -1,0 +1,9 @@
+BasedOnStyle: "Chromium"
+IndentWidth: 2
+AccessModifierOffset: -2
+
+AllowShortFunctionsOnASingleLine: All
+AllowShortIfStatementsOnASingleLine: true
+AllowShortLoopsOnASingleLine: true
+AlwaysBreakTemplateDeclarations: false
+SortIncludes: false

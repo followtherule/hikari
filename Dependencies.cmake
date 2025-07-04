@@ -45,4 +45,48 @@ function(project_setup_dependencies)
     )
   endif()
 
+  if(NOT TARGET GPUOpen::VulkanMemoryAllocator)
+    cpmaddpackage(
+      NAME
+      VulkanMemoryAllocator
+      VERSION
+      3.3.0
+      GITHUB_REPOSITORY
+      "GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator"
+    )
+  endif()
+
+  if(NOT TARGET vk-bootstrap::vk-bootstrap)
+    cpmaddpackage(
+      NAME
+      vk-bootstrap
+      GIT_TAG
+      0437431fd055ac362d388a006a0fd861a6c945f2
+      GITHUB_REPOSITORY
+      "charles-lunarg/vk-bootstrap"
+    )
+  endif()
+
+  # if(NOT TARGET ktx)
+  #   cpmaddpackage(
+  #     NAME
+  #     ktx
+  #     VERSION
+  #     4.4.0
+  #     GITHUB_REPOSITORY
+  #     KhronosGroup/KTX-Software
+  #   )
+  # endif()
+  #
+  # if(NOT TARGET tinygltf)
+  #   cpmaddpackage(
+  #     NAME
+  #     tinygltf
+  #     VERSION
+  #     2.9.6
+  #     GITHUB_REPOSITORY
+  #     syoyo/tinygltf
+  #   )
+  # endif()
+
 endfunction()

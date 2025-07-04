@@ -1,0 +1,14 @@
+#pragma once
+
+#include <string_view>
+
+// app's global settings, only used for this sample
+namespace sample {
+
+inline char* gAssetPath = "@PROJECT_SOURCE_DIR@/assets/";
+inline char* gAppName = "hikari app";
+inline constexpr int gWidth = 800;
+inline constexpr int gHeight = 600;
+inline constexpr bool gVsync = true;
+
+}  // namespace sample

@@ -12,21 +12,22 @@ namespace hkr {
 
 class Window {
 public:
-  Window(App* app, int width, int height, const std::string& name);
   ~Window();
+  void Init(App* app, int width, int height, const char* appName);
   GLFWwindow* GetWindow() const { return mWindow; }
 
 private:
+  void CleanUp();
   void SetCallback();
 
   GLFWwindow* mWindow;
   App* mApp;
 
-  struct Spec {
+  struct {
     int Width;
     int Height;
-    std::string Name;
   } mSpec;
+  bool mResized = false;
 };
 
 }  // namespace hkr
