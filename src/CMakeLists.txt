@@ -8,10 +8,12 @@ add_library(
   Core/stb_image.cpp
   Core/tiny_obj_loader.cpp
 
+  Renderer/Image.cpp
   Renderer/Renderer.cpp
   Renderer/vk_mem_alloc.cpp
 
   Util/Logger.cpp
+  Util/vk_util.cpp
 )
 
 add_library(${PROJECT_NAME}::hikari ALIAS hikari)

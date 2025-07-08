@@ -17,7 +17,7 @@ public:
   GLFWwindow* GetWindow() const { return mWindow; }
 
 private:
-  void CleanUp();
+  void Cleanup();
   void SetCallback();
 
   GLFWwindow* mWindow;

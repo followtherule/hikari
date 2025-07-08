@@ -3,9 +3,10 @@
 
 #include "Renderer/Renderer.h"
 #include "Core/Math.h"
+#include "Core/Window.h"
 #include "Util/Assert.h"
 #include "Util/vk_debug.h"
-#include "Core/Window.h"
+#include "Util/vk_util.h"
 
 #include "Core/stb_image.h"
 #include "Core/tiny_obj_loader.h"
@@ -44,73 +45,6 @@ struct UniformBufferObject {
 
 namespace {
 
-VkBool32 getSupportedDepthFormat(VkPhysicalDevice physicalDevice,
-                                 VkFormat* depthFormat) {
-  // Since all depth formats may be optional, we need to find a suitable depth
-  // format to use Start with the highest precision packed format
-  std::vector<VkFormat> formatList = {
-      VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D32_SFLOAT,
-      VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D16_UNORM_S8_UINT,
-      VK_FORMAT_D16_UNORM};
-
-  for (auto& format : formatList) {
-    VkFormatProperties formatProps;
-    vkGetPhysicalDeviceFormatProperties(physicalDevice, format, &formatProps);
-    if (formatProps.optimalTilingFeatures &
-        VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) {
-      *depthFormat = format;
-      return true;
-    }
-  }
-
-  return false;
-}
-
-VkBool32 getSupportedDepthStencilFormat(VkPhysicalDevice physicalDevice,
-                                        VkFormat* depthStencilFormat) {
-  std::vector<VkFormat> formatList = {
-      VK_FORMAT_D32_SFLOAT_S8_UINT,
-      VK_FORMAT_D24_UNORM_S8_UINT,
-      VK_FORMAT_D16_UNORM_S8_UINT,
-  };
-
-  for (auto& format : formatList) {
-    VkFormatProperties formatProps;
-    vkGetPhysicalDeviceFormatProperties(physicalDevice, format, &formatProps);
-    if (formatProps.optimalTilingFeatures &
-        VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) {
-      *depthStencilFormat = format;
-      return true;
-    }
-  }
-
-  return false;
-}
-
-void insertImageMemoryBarrier(VkCommandBuffer cmdbuffer,
-                              VkImage image,
-                              VkAccessFlags srcAccessMask,
-                              VkAccessFlags dstAccessMask,
-                              VkImageLayout oldImageLayout,
-                              VkImageLayout newImageLayout,
-                              VkPipelineStageFlags srcStageMask,
-                              VkPipelineStageFlags dstStageMask,
-                              VkImageSubresourceRange subresourceRange) {
-  VkImageMemoryBarrier imageMemoryBarrier{};
-  imageMemoryBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-  imageMemoryBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  imageMemoryBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  imageMemoryBarrier.srcAccessMask = srcAccessMask;
-  imageMemoryBarrier.dstAccessMask = dstAccessMask;
-  imageMemoryBarrier.oldLayout = oldImageLayout;
-  imageMemoryBarrier.newLayout = newImageLayout;
-  imageMemoryBarrier.image = image;
-  imageMemoryBarrier.subresourceRange = subresourceRange;
-
-  vkCmdPipelineBarrier(cmdbuffer, srcStageMask, dstStageMask, 0, 0, nullptr, 0,
-                       nullptr, 1, &imageMemoryBarrier);
-}
-
 std::vector<char> ReadFile(const std::string& filename) {
   std::ifstream file(filename, std::ios::ate | std::ios::binary);
 
@@ -134,21 +68,13 @@ debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
               void* pUserData) {
   if (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT) {
     HKR_INFO(pCallbackData->pMessage);
-    // HKR_INFO("{} - {}: {}", pCallbackData->messageIdNumber,
-    //          pCallbackData->pMessageIdName, pCallbackData->pMessage);
   } else if (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT) {
     HKR_INFO(pCallbackData->pMessage);
-    // HKR_INFO("{} - {}: {}", pCallbackData->messageIdNumber,
-    //          pCallbackData->pMessageIdName, pCallbackData->pMessage);
   } else if (messageSeverity &
              VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
     HKR_WARN(pCallbackData->pMessage);
-    // HKR_WARN("{} - {}: {}", pCallbackData->messageIdNumber,
-    //          pCallbackData->pMessageIdName, pCallbackData->pMessage);
   } else if (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
     HKR_ERROR(pCallbackData->pMessage);
-    // HKR_ERROR("{} - {}: {}", pCallbackData->messageIdNumber,
-    //           pCallbackData->pMessageIdName, pCallbackData->pMessage);
   }
 
   return VK_FALSE;
@@ -177,8 +103,10 @@ void Renderer::Init(const AppSettings& settings, GLFWwindow* window) {
   CreateSwapchain();
 
   // off-screen color, depth images
-  CreateColorImage();
-  CreateDepthImage();
+  mColorImage.Create(mDevice, mAllocator, mWidth, mHeight, 1,
+                     mSwapchainImageFormat);
+  mDepthImage.Create(mDevice, mAllocator, mWidth, mHeight, 1,
+                     FindDepthFormat());
 
   CreateCommandPool();
   CreateCommandBuffers();
@@ -202,7 +130,7 @@ void Renderer::Init(const AppSettings& settings, GLFWwindow* window) {
   InitCamera();
 }
 
-Renderer::~Renderer() { CleanUp(); }
+Renderer::~Renderer() { Cleanup(); }
 
 void Renderer::InitVulkan() {
   // 1. create instance
@@ -332,8 +260,6 @@ void Renderer::CreateSwapchain() {
   mSwapchain = swapchain.swapchain;
   mSwapchainImages = swapchain.get_images().value();
   mSwapchainImageViews = swapchain.get_image_views().value();
-  VK_LABEL(VK_OBJECT_TYPE_IMAGE_VIEW, mSwapchainImageViews[0],
-           "swapchain image view");
 }
 
 void Renderer::RecreateSwapchain() {
@@ -358,10 +284,13 @@ void Renderer::RecreateSwapchain() {
   vkb::Swapchain swapchain = swap_ret.value();
 
   // clean up off-screen images and swapchain images
-  vkDestroyImageView(mDevice, mColorImageView, nullptr);
-  vkDestroyImageView(mDevice, mDepthImageView, nullptr);
-  vmaDestroyImage(mAllocator, mColorImage, mColorImageAlloc);
-  vmaDestroyImage(mAllocator, mDepthImage, mDepthImageAlloc);
+  mColorImage.Cleanup(mDevice, mAllocator);
+  mDepthImage.Cleanup(mDevice, mAllocator);
+
+  mColorImage.Create(mDevice, mAllocator, mWidth, mHeight, 1,
+                     mSwapchainImageFormat);
+  mDepthImage.Create(mDevice, mAllocator, mWidth, mHeight, 1,
+                     FindDepthFormat());
   for (auto imageView : mSwapchainImageViews) {
     vkDestroyImageView(mDevice, imageView, nullptr);
   }
@@ -371,93 +300,6 @@ void Renderer::RecreateSwapchain() {
   mSwapchain = swapchain.swapchain;
   mSwapchainImages = swapchain.get_images().value();
   mSwapchainImageViews = swapchain.get_image_views().value();
-
-  CreateColorImage();
-  CreateDepthImage();
-}
-
-void Renderer::CreateColorImage() {
-  CreateImage(mColorImage, mColorImageAlloc, mWidth, mHeight, 1,
-              VK_SAMPLE_COUNT_1_BIT, mSwapchainImageFormat,
-              VK_IMAGE_TILING_OPTIMAL,
-              VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT |
-                  VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-              VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT);
-
-  mColorImageView = CreateImageView(mColorImage, mSwapchainImageFormat,
-                                    VK_IMAGE_ASPECT_COLOR_BIT, 1);
-}
-
-void Renderer::CreateDepthImage() {
-  mDepthFormat = FindDepthFormat();
-
-  CreateImage(mDepthImage, mDepthImageAlloc, mWidth, mHeight, 1,
-              VK_SAMPLE_COUNT_1_BIT, mDepthFormat, VK_IMAGE_TILING_OPTIMAL,
-              VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-              VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT);
-
-  VkImageAspectFlags aspectFlags = VK_IMAGE_ASPECT_DEPTH_BIT;
-  if (mDepthFormat >= VK_FORMAT_D16_UNORM_S8_UINT) {
-    aspectFlags |= VK_IMAGE_ASPECT_STENCIL_BIT;
-  }
-  mDepthImageView = CreateImageView(mDepthImage, mDepthFormat, aspectFlags, 1);
-}
-
-void Renderer::CreateImage(VkImage& image,
-                           VmaAllocation& imageAlloc,
-                           uint32_t width,
-                           uint32_t height,
-                           uint32_t mipLevels,
-                           VkSampleCountFlagBits numSamples,
-                           VkFormat format,
-                           VkImageTiling tiling,
-                           VkImageUsageFlags usage,
-                           VmaAllocatorCreateFlags allocFlags) {
-  VkImageCreateInfo imageInfo{};
-  imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-  imageInfo.imageType = VK_IMAGE_TYPE_2D;
-  imageInfo.extent.width = width;
-  imageInfo.extent.height = height;
-  imageInfo.extent.depth = 1;
-  imageInfo.mipLevels = mipLevels;
-  imageInfo.arrayLayers = 1;
-  imageInfo.format = format;
-  imageInfo.tiling = tiling;
-  imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-  imageInfo.usage = usage;
-  imageInfo.samples = numSamples;
-  imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-  VmaAllocationCreateInfo allocInfo{};
-  allocInfo.flags = allocFlags;
-  allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
-  allocInfo.priority = 1.0f;
-
-  vmaCreateImage(mAllocator, &imageInfo, &allocInfo, &image, &imageAlloc,
-                 nullptr);
-}
-
-VkImageView Renderer::CreateImageView(VkImage image,
-                                      VkFormat format,
-                                      VkImageAspectFlags aspectFlags,
-                                      uint32_t mipLevels) {
-  VkImageViewCreateInfo viewInfo{};
-  viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-  viewInfo.image = image;
-  viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-  viewInfo.format = format;
-  // viewInfo.components = {VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G,
-  //                        VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A};
-  viewInfo.subresourceRange.aspectMask = aspectFlags;
-  viewInfo.subresourceRange.baseMipLevel = 0;
-  viewInfo.subresourceRange.levelCount = mipLevels;
-  viewInfo.subresourceRange.baseArrayLayer = 0;
-  viewInfo.subresourceRange.layerCount = 1;
-
-  VkImageView imageView;
-  VK_CHECK(vkCreateImageView(mDevice, &viewInfo, nullptr, &imageView));
-
-  return imageView;
 }
 
 void Renderer::CreateCommandPool() {
@@ -536,30 +378,22 @@ void Renderer::CreateTextureImage() {
 
   stbi_image_free(pixels);
 
-  CreateImage(mTextureImage, mTextureImageAlloc, texWidth, texHeight, mipLevels,
-              VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R8G8B8A8_SRGB,
-              VK_IMAGE_TILING_OPTIMAL,
-              VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-                  VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  mTextureImage.Create(mDevice, mAllocator, texWidth, texHeight, mipLevels,
+                       VK_FORMAT_R8G8B8A8_SRGB);
 
-  TransitionImageLayout(mTextureImage, VK_FORMAT_R8G8B8A8_SRGB,
-                        VK_IMAGE_LAYOUT_UNDEFINED,
+  TransitionImageLayout(mDevice, mGraphicsQueue, mCommandPool,
+                        mTextureImage.image, VK_IMAGE_LAYOUT_UNDEFINED,
                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, mipLevels);
-  CopyBufferToImage(stagingBuffer, mTextureImage,
-                    static_cast<uint32_t>(texWidth),
+  CopyBufferToImage(mDevice, mGraphicsQueue, mCommandPool, stagingBuffer,
+                    mTextureImage.image, static_cast<uint32_t>(texWidth),
                     static_cast<uint32_t>(texHeight));
 
   vmaDestroyBuffer(mAllocator, stagingBuffer, stagingBufferAlloc);
 
   // transitioned to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL while
   // generating mipmaps
-  GenerateMipmaps(mTextureImage, VK_FORMAT_R8G8B8A8_SRGB, texWidth, texHeight,
-                  mipLevels);
-
-  mTextureImageView = CreateImageView(mTextureImage, VK_FORMAT_R8G8B8A8_SRGB,
-                                      VK_IMAGE_ASPECT_COLOR_BIT, mipLevels);
-  VK_LABEL(VK_OBJECT_TYPE_IMAGE_VIEW, mTextureImageView, "texture image view");
+  GenerateMipmaps(mDevice, mGraphicsQueue, mCommandPool, mTextureImage.image,
+                  texWidth, texHeight, mipLevels);
 }
 
 void Renderer::CreateTextureSampler() {
@@ -626,7 +460,7 @@ void Renderer::CreateDescriptorSets() {
 
     VkDescriptorImageInfo imageInfo{};
     imageInfo.sampler = mTextureSampler;
-    imageInfo.imageView = mTextureImageView;
+    imageInfo.imageView = mTextureImage.imageView;
     imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
     std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
@@ -788,9 +622,9 @@ void Renderer::CreateGraphicsPipeline() {
       VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
   pipelineRenderingCI.colorAttachmentCount = 1;
   pipelineRenderingCI.pColorAttachmentFormats = &mSwapchainImageFormat;
-  pipelineRenderingCI.depthAttachmentFormat = mDepthFormat;
+  pipelineRenderingCI.depthAttachmentFormat = FindDepthFormat();
   if (mRequireStencil) {
-    pipelineRenderingCI.stencilAttachmentFormat = mDepthFormat;
+    pipelineRenderingCI.stencilAttachmentFormat = FindDepthFormat();
   }
 
   VkGraphicsPipelineCreateInfo pipelineInfo{};
@@ -872,7 +706,8 @@ void Renderer::CreateVertexBuffer() {
       mVertexBuffer, mVertexBufferAlloc, bufferSize,
       VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
 
-  CopyBuffer(stagingBuffer, mVertexBuffer, bufferSize);
+  CopyBuffer(mDevice, mGraphicsQueue, mCommandPool, stagingBuffer,
+             mVertexBuffer, bufferSize);
 
   vmaDestroyBuffer(mAllocator, stagingBuffer, stagingBufferAlloc);
 }
@@ -896,7 +731,8 @@ void Renderer::CreateIndexBuffer() {
       mIndexBuffer, mIndexBufferAlloc, bufferSize,
       VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
 
-  CopyBuffer(stagingBuffer, mIndexBuffer, bufferSize);
+  CopyBuffer(mDevice, mGraphicsQueue, mCommandPool, stagingBuffer, mIndexBuffer,
+             bufferSize);
 
   vmaDestroyBuffer(mAllocator, stagingBuffer, stagingBufferAlloc);
 }
@@ -1026,207 +862,6 @@ void Renderer::CreateBuffer(VkBuffer& buffer,
   VmaAllocationInfo allocInfo;
   vmaCreateBuffer(mAllocator, &bufferInfo, &allocCreateInfo, &buffer, &alloc,
                   &allocInfo);
-}  // namespace hkr
-
-void Renderer::TransitionImageLayout(VkImage image,
-                                     VkFormat format,
-                                     VkImageLayout oldLayout,
-                                     VkImageLayout newLayout,
-                                     uint32_t mipLevels) {
-  VkCommandBuffer commandBuffer = BeginSingleTimeCommands();
-
-  VkImageMemoryBarrier barrier{};
-  barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-  barrier.oldLayout = oldLayout;
-  barrier.newLayout = newLayout;
-  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  barrier.image = image;
-  barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-  barrier.subresourceRange.baseMipLevel = 0;
-  barrier.subresourceRange.levelCount = mipLevels;
-  barrier.subresourceRange.baseArrayLayer = 0;
-  barrier.subresourceRange.layerCount = 1;
-
-  VkPipelineStageFlags sourceStage;
-  VkPipelineStageFlags destinationStage;
-
-  if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED &&
-      newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
-    barrier.srcAccessMask = 0;
-    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-
-    sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-    destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-  } else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
-             newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
-    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-
-    sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-    destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-  } else {
-    HKR_ERROR("");
-  }
-
-  vkCmdPipelineBarrier(commandBuffer, sourceStage, destinationStage, 0, 0,
-                       nullptr, 0, nullptr, 1, &barrier);
-
-  EndSingleTimeCommands(commandBuffer);
-}
-
-void Renderer::CopyBufferToImage(VkBuffer buffer,
-                                 VkImage image,
-                                 uint32_t width,
-                                 uint32_t height) {
-  VkCommandBuffer commandBuffer = BeginSingleTimeCommands();
-
-  VkBufferImageCopy region{};
-  region.bufferOffset = 0;
-  region.bufferRowLength = 0;
-  region.bufferImageHeight = 0;
-  region.imageSubresource;
-  region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-  region.imageSubresource.mipLevel = 0;
-  region.imageSubresource.baseArrayLayer = 0;
-  region.imageSubresource.layerCount = 1;
-  region.imageOffset = {0, 0, 0};
-  region.imageExtent = {width, height, 1};
-
-  vkCmdCopyBufferToImage(commandBuffer, buffer, image,
-                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-
-  EndSingleTimeCommands(commandBuffer);
-}
-
-VkCommandBuffer Renderer::BeginSingleTimeCommands() {
-  VkCommandBufferAllocateInfo allocInfo{};
-  allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-  allocInfo.commandPool = mCommandPool;
-  allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-  allocInfo.commandBufferCount = 1;
-
-  VkCommandBuffer commandBuffer;
-  vkAllocateCommandBuffers(mDevice, &allocInfo, &commandBuffer);
-
-  VkCommandBufferBeginInfo beginInfo{};
-  beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-  beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-
-  vkBeginCommandBuffer(commandBuffer, &beginInfo);
-
-  return commandBuffer;
-}
-
-void Renderer::EndSingleTimeCommands(VkCommandBuffer commandBuffer) {
-  vkEndCommandBuffer(commandBuffer);
-
-  VkSubmitInfo submitInfo{};
-  submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-  submitInfo.commandBufferCount = 1;
-  submitInfo.pCommandBuffers = &commandBuffer;
-
-  vkQueueSubmit(mGraphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
-  vkQueueWaitIdle(mGraphicsQueue);
-
-  vkFreeCommandBuffers(mDevice, mCommandPool, 1, &commandBuffer);
-}
-
-void Renderer::GenerateMipmaps(VkImage image,
-                               VkFormat imageFormat,
-                               int32_t texWidth,
-                               int32_t texHeight,
-                               uint32_t mipLevels) {
-  // Check if image format supports linear blitting
-  VkFormatProperties formatProperties;
-  vkGetPhysicalDeviceFormatProperties(mPhysDevice, imageFormat,
-                                      &formatProperties);
-
-  HKR_ASSERT(formatProperties.optimalTilingFeatures &
-             VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT);
-
-  VkCommandBuffer commandBuffer = BeginSingleTimeCommands();
-
-  VkImageMemoryBarrier barrier{};
-  barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  barrier.image = image;
-  barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-  barrier.subresourceRange.baseMipLevel = 0;
-  barrier.subresourceRange.levelCount = 1;
-  barrier.subresourceRange.baseArrayLayer = 0;
-  barrier.subresourceRange.layerCount = 1;
-
-  int32_t mipWidth = texWidth;
-  int32_t mipHeight = texHeight;
-
-  for (uint32_t i = 1; i < mipLevels; i++) {
-    barrier.subresourceRange.baseMipLevel = i - 1;
-    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-
-    vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
-                         nullptr, 1, &barrier);
-
-    VkImageBlit blit{};
-    blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    blit.srcSubresource.mipLevel = i - 1;
-    blit.srcSubresource.baseArrayLayer = 0;
-    blit.srcSubresource.layerCount = 1;
-    blit.srcOffsets[0] = {0, 0, 0};
-    blit.srcOffsets[1] = {mipWidth, mipHeight, 1};
-    blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    blit.dstSubresource.mipLevel = i;
-    blit.dstSubresource.baseArrayLayer = 0;
-    blit.dstSubresource.layerCount = 1;
-    blit.dstOffsets[0] = {0, 0, 0};
-    blit.dstOffsets[1] = {mipWidth > 1 ? mipWidth / 2 : 1,
-                          mipHeight > 1 ? mipHeight / 2 : 1, 1};
-
-    vkCmdBlitImage(commandBuffer, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                   image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
-                   VK_FILTER_LINEAR);
-
-    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-
-    vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr,
-                         0, nullptr, 1, &barrier);
-
-    if (mipWidth > 1) mipWidth /= 2;
-    if (mipHeight > 1) mipHeight /= 2;
-  }
-
-  barrier.subresourceRange.baseMipLevel = mipLevels - 1;
-  barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-  barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-  barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-  barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-
-  vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0,
-                       nullptr, 1, &barrier);
-
-  EndSingleTimeCommands(commandBuffer);
-}
-
-void Renderer::CopyBuffer(VkBuffer srcBuffer,
-                          VkBuffer dstBuffer,
-                          VkDeviceSize size) {
-  VkCommandBuffer commandBuffer = BeginSingleTimeCommands();
-
-  VkBufferCopy copyRegion{};
-  copyRegion.size = size;
-  vkCmdCopyBuffer(commandBuffer, srcBuffer, dstBuffer, 1, &copyRegion);
-
-  EndSingleTimeCommands(commandBuffer);
 }
 
 void Renderer::DrawFrame() {
@@ -1243,12 +878,6 @@ void Renderer::DrawFrame() {
   VkResult result = vkAcquireNextImageKHR(
       mDevice, mSwapchain, UINT64_MAX, mImageAvailableSemaphores[mCurrentFrame],
       VK_NULL_HANDLE, &imageIndex);
-
-  // if (result == VK_ERROR_OUT_OF_DATE_KHR || mFramebufferResized) {
-  //   mFramebufferResized = false;
-  //   RecreateSwapchain();
-  //   return;
-  // }
   HKR_ASSERT(result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR);
 
   UpdateUniformBuffer(mCurrentFrame);
@@ -1263,22 +892,41 @@ void Renderer::DrawFrame() {
   // pWaitSemaphores)
   VkPipelineStageFlags waitStages[] = {
       VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
-  VkSemaphore waitSemaphores[] = {mImageAvailableSemaphores[mCurrentFrame]};
+
+  VkCommandBufferSubmitInfo commandInfo{};
+  commandInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+  commandInfo.pNext = nullptr;
+  commandInfo.commandBuffer = mCommandBuffers[mCurrentFrame];
+  commandInfo.deviceMask = 0;
+
+  VkSemaphoreSubmitInfo waitInfo{};
+  waitInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+  waitInfo.semaphore = mImageAvailableSemaphores[mCurrentFrame];
+  waitInfo.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR;
+  waitInfo.deviceIndex = 0;
+  waitInfo.value = 1;
+
+  VkSemaphoreSubmitInfo signalInfo{};
+  signalInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+  signalInfo.semaphore = mRenderFinishedSemaphores[mCurrentFrame];
+  signalInfo.stageMask = VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT;
+  signalInfo.deviceIndex = 0;
+  signalInfo.value = 1;
+
   VkSemaphore signalSemaphores[] = {mRenderFinishedSemaphores[mCurrentFrame]};
   // The submit info structure specifies a command buffer queue submission
   // batch
-  VkSubmitInfo submitInfo{};
-  submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-  submitInfo.waitSemaphoreCount = 1;
-  submitInfo.pWaitSemaphores = waitSemaphores;
-  submitInfo.pWaitDstStageMask = waitStages;
-  submitInfo.commandBufferCount = 1;
-  submitInfo.pCommandBuffers = &mCommandBuffers[mCurrentFrame];
-  submitInfo.signalSemaphoreCount = 1;
-  submitInfo.pSignalSemaphores = signalSemaphores;
+  VkSubmitInfo2 submitInfo{};
+  submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
+  submitInfo.waitSemaphoreInfoCount = 1;
+  submitInfo.pWaitSemaphoreInfos = &waitInfo;
+  submitInfo.signalSemaphoreInfoCount = 1;
+  submitInfo.pSignalSemaphoreInfos = &signalInfo;
+  submitInfo.commandBufferInfoCount = 1;
+  submitInfo.pCommandBufferInfos = &commandInfo;
 
-  VK_CHECK(vkQueueSubmit(mGraphicsQueue, 1, &submitInfo,
-                         mInFlightFences[mCurrentFrame]));
+  VK_CHECK(vkQueueSubmit2(mGraphicsQueue, 1, &submitInfo,
+                          mInFlightFences[mCurrentFrame]));
 
   VkSwapchainKHR swapChains[] = {mSwapchain};
   VkPresentInfoKHR presentInfo{};
@@ -1289,50 +937,16 @@ void Renderer::DrawFrame() {
   presentInfo.pSwapchains = swapChains;
   presentInfo.pImageIndices = &imageIndex;
 
-  result = vkQueuePresentKHR(mGraphicsQueue, &presentInfo);
-
-  // if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR ||
-  //     mFramebufferResized) {
-  //   mFramebufferResized = false;
-  //   RecreateSwapchain();
-  // }
-  HKR_ASSERT(result == VK_SUCCESS);
+  VK_CHECK(vkQueuePresentKHR(mGraphicsQueue, &presentInfo));
 
   mCurrentFrame = (mCurrentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 
 void Renderer::UpdateUniformBuffer(uint32_t currentImage) {
-  // static auto startTime = std::chrono::high_resolution_clock::now();
-  //
-  // auto currentTime = std::chrono::high_resolution_clock::now();
-  // float time = std::chrono::duration<float, std::chrono::seconds::period>(
-  //                  currentTime - startTime)
-  //                  .count();
-
   UniformBufferObject ubo{};
-  // ubo.model = rotate(mat4(1.0f), time * radians(90.0f),
-  //                         vec3(0.0f, 0.0f, 1.0f));
-  // ubo.model = mat4(1.0f);
-  // ubo.view = glm::lookAt(vec3(2.0f, 2.0f, 2.0f), vec3(0.0f, 0.0f, 0.0f),
-  //                        vec3(0.0f, 0.0f, 1.0f));
-  // ubo.proj = glm::perspective(
-  //     glm::radians(45.0f),
-  //     mSwapChainExtent.width / (float)mSwapChainExtent.height,
-  //     0.1f, 10.0f);
-  // ubo.proj[1][1] *= -1;
-
   ubo.model = Mat4(1.0);
-  // ubo.view = glm::lookAt(Vec3(2.0f, 0.0f, 2.0f), Vec3(0.0f, 0.0f, 0.0f),
-  //                        Vec3(0.0f, 1.0f, 0.0f));
-  // ubo.proj = glm::perspective(glm::radians(45.0f), mWidth / (float)mHeight,
-  //                             0.1f, 10.0f);
-  // ubo.proj[1][1] *= -1;
-
-  // ubo.model = glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f),
-  //                         glm::vec3(0.0f, 1.0f, 0.0f));
-  // ubo.view = mCamera.matrices.view;
-  // ubo.proj = mCamera.matrices.perspective;
-  // ubo.proj[1][1] *= -1;
+  ubo.model = glm::rotate(ubo.model, glm::radians(-90.0f), {0, 1, 0});
+  ubo.model = glm::rotate(ubo.model, glm::radians(-90.0f), {1, 0, 0});
 
   ubo.view = mCamera.GetView();
   ubo.proj = mCamera.GetProj();
@@ -1346,26 +960,26 @@ void Renderer::RecordCommandBuffer(VkCommandBuffer commandBuffer,
   beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
   VK_CHECK(vkBeginCommandBuffer(commandBuffer, &beginInfo));
 
-  insertImageMemoryBarrier(
-      commandBuffer, mSwapchainImages[imageIndex], 0,
-      VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+  InsertImageMemoryBarrier(
+      commandBuffer, mSwapchainImages[imageIndex],
+      VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+      VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, 0,
+      VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
       VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
-      VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-      VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
       VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1});
 
   VkImageAspectFlags aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
   if (mRequireStencil) {
     aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT;
   }
-  insertImageMemoryBarrier(commandBuffer, mDepthImage, 0,
-                           VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+  InsertImageMemoryBarrier(commandBuffer, mDepthImage.image,
+                           VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
+                               VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                           VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
+                               VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                           0, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                            VK_IMAGE_LAYOUT_UNDEFINED,
                            VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
-                           VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
-                               VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-                           VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
-                               VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
                            VkImageSubresourceRange{aspectMask, 0, 1, 0, 1});
 
   // Color attachment
@@ -1379,7 +993,7 @@ void Renderer::RecordCommandBuffer(VkCommandBuffer commandBuffer,
   // Depth/stencil attachment
   VkRenderingAttachmentInfo depthStencilAttachment{
       VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-  depthStencilAttachment.imageView = mDepthImageView;
+  depthStencilAttachment.imageView = mDepthImage.imageView;
   depthStencilAttachment.imageLayout =
       VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
   depthStencilAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
@@ -1439,11 +1053,11 @@ void Renderer::RecordCommandBuffer(VkCommandBuffer commandBuffer,
   vkCmdEndRendering(commandBuffer);
   // This barrier prepares the color image for presentation, we don't need to
   // care for the depth image
-  insertImageMemoryBarrier(
+  InsertImageMemoryBarrier(
       commandBuffer, mSwapchainImages[imageIndex],
-      VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, 0,
+      VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_2_NONE,
+      VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 0,
       VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-      VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_2_NONE,
       VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1});
 
   VK_CHECK(vkEndCommandBuffer(commandBuffer));
@@ -1460,13 +1074,12 @@ void Renderer::Render() {
   mCamera.Update(frameTimer);
 }
 
-void Renderer::CleanUp() {
+void Renderer::Cleanup() {
   vkDeviceWaitIdle(mDevice);
 
-  vkDestroyImageView(mDevice, mColorImageView, nullptr);
-  vmaDestroyImage(mAllocator, mColorImage, mColorImageAlloc);
-  vkDestroyImageView(mDevice, mDepthImageView, nullptr);
-  vmaDestroyImage(mAllocator, mDepthImage, mDepthImageAlloc);
+  mColorImage.Cleanup(mDevice, mAllocator);
+  mDepthImage.Cleanup(mDevice, mAllocator);
+
   for (auto imageView : mSwapchainImageViews) {
     vkDestroyImageView(mDevice, imageView, nullptr);
   }
@@ -1482,8 +1095,9 @@ void Renderer::CleanUp() {
   vkDestroyDescriptorPool(mDevice, mDescriptorPool, nullptr);
   //
   vkDestroySampler(mDevice, mTextureSampler, nullptr);
-  vkDestroyImageView(mDevice, mTextureImageView, nullptr);
-  vmaDestroyImage(mAllocator, mTextureImage, mTextureImageAlloc);
+
+  mTextureImage.Cleanup(mDevice, mAllocator);
+
   vkDestroyDescriptorSetLayout(mDevice, mDescriptorSetLayout, nullptr);
 
   vmaDestroyBuffer(mAllocator, mVertexBuffer, mVertexBufferAlloc);

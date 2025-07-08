@@ -30,7 +30,7 @@ public:
 
 private:
   // clean up resources
-  void HKR_NO_EXPORT CleanUp();
+  void HKR_NO_EXPORT Cleanup();
   void HKR_NO_EXPORT OnResize(int width, int height);
   void HKR_NO_EXPORT OnKeyEvent(int key, int action);
   void HKR_NO_EXPORT OnMouseEvent(int button, int action);

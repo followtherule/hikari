@@ -1,6 +1,7 @@
 #pragma once
 
 #include "hikari/Util/Logger.h"
+#include "Util/Assert.h"
 
 #ifdef HKR_DEBUG
 #include <filesystem>

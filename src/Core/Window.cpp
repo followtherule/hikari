@@ -21,40 +21,40 @@ void Window::Init(App* app, int width, int height, const char* appName) {
   SetCallback();
 }
 
-void Window::CleanUp() {
+void Window::Cleanup() {
   glfwDestroyWindow(mWindow);
   glfwTerminate();
 }
 
-Window::~Window() { CleanUp(); }
+Window::~Window() { Cleanup(); }
 
 void Window::SetCallback() {
   // resize
   glfwSetFramebufferSizeCallback(
       mWindow, [](GLFWwindow* window, int width, int height) {
-        App& app = *static_cast<App*>(glfwGetWindowUserPointer(window));
-        app.OnResize(width, height);
+        auto app = reinterpret_cast<App*>(glfwGetWindowUserPointer(window));
+        app->OnResize(width, height);
       });
 
   // mouse
   glfwSetMouseButtonCallback(
       mWindow, [](GLFWwindow* window, int button, int action, int mods) {
-        App& app = *static_cast<App*>(glfwGetWindowUserPointer(window));
-        app.OnMouseEvent(button, action);
+        auto app = reinterpret_cast<App*>(glfwGetWindowUserPointer(window));
+        app->OnMouseEvent(button, action);
       });
 
   // mouse pos
   glfwSetCursorPosCallback(
       mWindow, [](GLFWwindow* window, double xpos, double ypos) {
-        App& app = *static_cast<App*>(glfwGetWindowUserPointer(window));
-        app.OnMouseMoveEvent(xpos, ypos);
+        auto app = reinterpret_cast<App*>(glfwGetWindowUserPointer(window));
+        app->OnMouseMoveEvent(xpos, ypos);
       });
 
   // key
   glfwSetKeyCallback(mWindow, [](GLFWwindow* window, int key, int scancode,
                                  int action, int mods) {
-    App& app = *static_cast<App*>(glfwGetWindowUserPointer(window));
-    app.OnKeyEvent(key, action);
+    auto app = reinterpret_cast<App*>(glfwGetWindowUserPointer(window));
+    app->OnKeyEvent(key, action);
   });
 }
 

@@ -16,12 +16,12 @@ void App::Init() {
   mRenderer->Init(Settings, mWindow->GetWindow());
 }
 
-void App::CleanUp() {
+void App::Cleanup() {
   delete mRenderer;
   delete mWindow;
 }
 
-App::~App() { CleanUp(); }
+App::~App() { Cleanup(); }
 
 void App::Run() {
   while (!glfwWindowShouldClose(mWindow->GetWindow())) {

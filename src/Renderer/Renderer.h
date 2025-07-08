@@ -3,6 +3,7 @@
 #include "Core/Math.h"
 #include "Core/Mouse.h"
 #include "Renderer/Camera.h"
+#include "Renderer/Image.h"
 #include "hikari/Core/App.h"
 
 #include <vk_mem_alloc.h>
@@ -75,7 +76,7 @@ public:
 
 private:
   // clean up resources
-  void CleanUp();
+  void Cleanup();
 
   // create instance, choose physical device, build logical device, get graphics
   // queue, setup vma allocator
@@ -85,8 +86,8 @@ private:
   void RecreateSwapchain();
 
   // off-screen images for the first renderpass
-  void CreateColorImage();
-  void CreateDepthImage();
+  // void CreateColorImage();
+  // void CreateDepthImage();
 
   void CreateCommandPool();
   void CreateCommandBuffers();
@@ -105,20 +106,20 @@ private:
   void CreateDescriptorSets();
   void CreateSyncObjects();
 
-  void CreateImage(VkImage& image,
-                   VmaAllocation& imageAlloc,
-                   uint32_t width,
-                   uint32_t height,
-                   uint32_t mipLevels,
-                   VkSampleCountFlagBits numSamples,
-                   VkFormat format,
-                   VkImageTiling tiling,
-                   VkImageUsageFlags usage,
-                   VmaAllocatorCreateFlags allocFlags = 0);
-  VkImageView CreateImageView(VkImage image,
-                              VkFormat format,
-                              VkImageAspectFlags aspectFlags,
-                              uint32_t mipLevels);
+  // void CreateImage(VkImage& image,
+  //                  VmaAllocation& imageAlloc,
+  //                  uint32_t width,
+  //                  uint32_t height,
+  //                  uint32_t mipLevels,
+  //                  VkSampleCountFlagBits numSamples,
+  //                  VkFormat format,
+  //                  VkImageTiling tiling,
+  //                  VkImageUsageFlags usage,
+  //                  VmaAllocatorCreateFlags allocFlags = 0);
+  // VkImageView CreateImageView(VkImage image,
+  //                             VkFormat format,
+  //                             VkImageAspectFlags aspectFlags,
+  //                             uint32_t mipLevels);
   void CreateBuffer(VkBuffer& buffer,
                     VmaAllocation& alloc,
                     VkDeviceSize size,
@@ -132,23 +133,22 @@ private:
 
   VkFormat FindDepthFormat();
   VkShaderModule CreateShaderModule(const std::vector<char>& code);
-  void TransitionImageLayout(VkImage image,
-                             VkFormat format,
-                             VkImageLayout oldLayout,
-                             VkImageLayout newLayout,
-                             uint32_t mipLevels);
-  void CopyBufferToImage(VkBuffer buffer,
-                         VkImage image,
-                         uint32_t width,
-                         uint32_t height);
-  VkCommandBuffer BeginSingleTimeCommands();
-  void EndSingleTimeCommands(VkCommandBuffer commandBuffer);
-  void GenerateMipmaps(VkImage image,
-                       VkFormat imageFormat,
-                       int32_t texWidth,
-                       int32_t texHeight,
-                       uint32_t mipLevels);
-  void CopyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
+  // void TransitionImageLayout(VkImage image,
+  //                            VkImageLayout oldLayout,
+  //                            VkImageLayout newLayout,
+  //                            uint32_t mipLevels);
+  // void CopyBufferToImage(VkBuffer buffer,
+  //                        VkImage image,
+  //                        uint32_t width,
+  //                        uint32_t height);
+  // VkCommandBuffer BeginSingleTimeCommands();
+  // void EndSingleTimeCommands(VkCommandBuffer commandBuffer);
+  // void GenerateMipmaps(VkImage image,
+  //                      VkFormat imageFormat,
+  //                      int32_t texWidth,
+  //                      int32_t texHeight,
+  //                      uint32_t mipLevels);
+  // void CopyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
   void CleanupSwapChain();
   void UpdateUniformBuffer(uint32_t currentImage);
   void RecordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
@@ -184,12 +184,15 @@ private:
   // VkExtent2D mSwapChainExtent;
 
   // off-screen images
-  VkImage mColorImage;
-  VkImageView mColorImageView;
-  VmaAllocation mColorImageAlloc;
-  VkImage mDepthImage;
-  VkImageView mDepthImageView;
-  VmaAllocation mDepthImageAlloc;
+  ColorImage2D mColorImage;
+  DepthImage2D mDepthImage;
+
+  // VkImage mColorImage;
+  // VkImageView mColorImageView;
+  // VmaAllocation mColorImageAlloc;
+  // VkImage mDepthImage;
+  // VkImageView mDepthImageView;
+  // VmaAllocation mDepthImageAlloc;
   bool mRequireStencil = false;
 
   VkCommandPool mCommandPool;
@@ -199,9 +202,12 @@ private:
   std::vector<VkBuffer> mUniformBuffers;
   std::vector<VmaAllocation> mUniformBuffersAlloc;
   std::vector<void*> mUniformBuffersMapped;
-  VkImage mTextureImage;
-  VmaAllocation mTextureImageAlloc;
-  VkImageView mTextureImageView;
+
+  Texture2D mTextureImage;
+  // VkImage mTextureImage;
+  // VmaAllocation mTextureImageAlloc;
+  // VkImageView mTextureImageView;
+
   VkSampler mTextureSampler;
   std::vector<Vertex> mVertices;
   std::vector<uint32_t> mIndices;
