@@ -22,13 +22,13 @@ void InsertImageMemoryBarrier(VkCommandBuffer cmdbuffer,
                               VkImageLayout newImageLayout,
                               VkImageSubresourceRange subresourceRange);
 
-void TransitionImageLayout(VkDevice device,
-                           VkQueue queue,
-                           VkCommandPool commandPool,
-                           VkImage image,
-                           VkImageLayout oldLayout,
-                           VkImageLayout newLayout,
-                           uint32_t mipLevels);
+void TransitImageLayout(VkDevice device,
+                        VkQueue queue,
+                        VkCommandPool commandPool,
+                        VkImage image,
+                        VkImageLayout oldLayout,
+                        VkImageLayout newLayout,
+                        uint32_t mipLevels);
 
 void GenerateMipmaps(VkDevice device,
                      VkQueue queue,

@@ -11,9 +11,9 @@ namespace hkr {
 void App::Init() {
   Logger::Init();
   mWindow = new Window;
-  mWindow->Init(this, 1920, 1080, Settings.AppName);
+  mWindow->Init(this, 1920, 1080, settings.appName);
   mRenderer = new Renderer;
-  mRenderer->Init(Settings, mWindow->GetWindow());
+  mRenderer->Init(settings, mWindow->GetWindow());
 }
 
 void App::Cleanup() {
@@ -37,11 +37,11 @@ void App::Run() {
   // vkDeviceWaitIdle(device);
 }
 
-bool App::IsMinimized() { return Settings.Width == 0 || Settings.Height == 0; }
+bool App::IsMinimized() { return settings.width == 0 || settings.height == 0; }
 
 void App::OnResize(int width, int height) {
-  Settings.Width = width;
-  Settings.Height = height;
+  settings.width = width;
+  settings.height = height;
   mRenderer->Resize(width, height);
 }
 

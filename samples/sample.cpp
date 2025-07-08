@@ -7,13 +7,13 @@
 class Sample : public hkr::App {
 public:
   Sample() {
-    Settings.AppName = sample::gAppName;
-    Settings.AssetPath = sample::gAssetPath;
-    Settings.ModelRelPath = "models/viking_room.obj";
-    Settings.TextureRelPath = "textures/viking_room.png";
-    Settings.Width = sample::gWidth;
-    Settings.Height = sample::gHeight;
-    Settings.Vsync = sample::gVsync;
+    settings.appName = sample::gAppName;
+    settings.assetPath = sample::gAssetPath;
+    settings.modelRelPath = "models/viking_room.obj";
+    settings.textureRelPath = "textures/viking_room.png";
+    settings.width = sample::gWidth;
+    settings.height = sample::gHeight;
+    settings.vsync = sample::gVsync;
   }
 };
 

@@ -113,7 +113,7 @@ public:
   void Cleanup(VkDevice device, VmaAllocator allocator);
 };
 
-// 2d texture
+// 2d texture, rendering target or sampled image
 class Texture2D : public Image2D {
 public:
   Texture2D() = default;

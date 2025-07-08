@@ -9,13 +9,13 @@ class Renderer;
 
 // default app settings
 struct AppSettings {
-  char* AppName;
-  char* AssetPath;
-  char* ModelRelPath;
-  char* TextureRelPath;
-  int Width = 800;
-  int Height = 600;
-  bool Vsync = true;
+  char* appName;
+  char* assetPath;
+  char* modelRelPath;
+  char* textureRelPath;
+  int width = 800;
+  int height = 600;
+  bool vsync = true;
 };
 
 class HKR_EXPORT App {
@@ -26,7 +26,7 @@ public:
   // rendering loop
   void Run();
 
-  AppSettings Settings;
+  AppSettings settings;
 
 private:
   // clean up resources

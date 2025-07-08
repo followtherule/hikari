@@ -9,7 +9,10 @@ public:
   void SetPosition(Vec3 pos) { mPosition = pos; }
   void Translate(float dx, float dy, float dz) { Translate({dx, dy, dz}); }
   void Translate(Vec3 delta) {
-    mPosition += delta * mMoveSpeed;
+    Vec3 right = {mView[0][0], mView[1][0], mView[2][0]};
+    Vec3 up = {mView[0][1], mView[1][1], mView[2][1]};
+    Vec3 forward = {-mView[0][2], -mView[1][2], -mView[2][2]};
+    mPosition += (delta.x * right + delta.y * up - delta.z * forward) * mMoveSpeed;
     MakeView();
   }
   void SetRotation(Vec3 rot) { mRotation = rot; }

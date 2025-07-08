@@ -4,6 +4,7 @@
 #include "Core/Mouse.h"
 #include "Renderer/Camera.h"
 #include "Renderer/Image.h"
+#include "Renderer/Buffer.h"
 #include "hikari/Core/App.h"
 
 #include <vk_mem_alloc.h>
@@ -199,9 +200,10 @@ private:
   std::vector<VkCommandBuffer> mCommandBuffers;
 
   // descriptor resources
-  std::vector<VkBuffer> mUniformBuffers;
-  std::vector<VmaAllocation> mUniformBuffersAlloc;
-  std::vector<void*> mUniformBuffersMapped;
+  // std::vector<VkBuffer> mUniformBuffers;
+  // std::vector<VmaAllocation> mUniformBuffersAlloc;
+  // std::vector<void*> mUniformBuffersMapped;
+  std::array<UniformBuffer, MAX_FRAMES_IN_FLIGHT> mUniformBuffers;
 
   Texture2D mTextureImage;
   // VkImage mTextureImage;
@@ -211,10 +213,13 @@ private:
   VkSampler mTextureSampler;
   std::vector<Vertex> mVertices;
   std::vector<uint32_t> mIndices;
-  VkBuffer mVertexBuffer;
-  VmaAllocation mVertexBufferAlloc;
-  VkBuffer mIndexBuffer;
-  VmaAllocation mIndexBufferAlloc;
+  VertexBuffer mVertexBuffer;
+  IndexBuffer mIndexBuffer;
+
+  // VkBuffer mVertexBuffer;
+  // VmaAllocation mVertexBufferAlloc;
+  // VkBuffer mIndexBuffer;
+  // VmaAllocation mIndexBufferAlloc;
 
   VkDescriptorSetLayout mDescriptorSetLayout;
   VkDescriptorPool mDescriptorPool;

@@ -1,6 +1,6 @@
-#include "glm/ext/matrix_transform.hpp"
+#include "Renderer/Buffer.h"
 #include "hikari/Util/Logger.h"
-
+#include "Renderer/Descriptor.h"
 #include "Renderer/Renderer.h"
 #include "Core/Math.h"
 #include "Core/Window.h"
@@ -85,16 +85,16 @@ debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
 namespace hkr {
 
 void Renderer::Init(const AppSettings& settings, GLFWwindow* window) {
-  mModelPath = settings.AssetPath;
-  mModelPath += settings.ModelRelPath;
-  mTexturePath = settings.AssetPath;
-  mTexturePath += settings.TextureRelPath;
-  mShaderPath = settings.AssetPath;
+  mModelPath = settings.assetPath;
+  mModelPath += settings.modelRelPath;
+  mTexturePath = settings.assetPath;
+  mTexturePath += settings.textureRelPath;
+  mShaderPath = settings.assetPath;
   mShaderPath += "spirv/";
-  mAppName = settings.AppName;
-  mWidth = settings.Width;
-  mHeight = settings.Height;
-  mVsync = settings.Vsync;
+  mAppName = settings.appName;
+  mWidth = settings.width;
+  mHeight = settings.height;
+  mVsync = settings.vsync;
   mWindow = window;
 
   // instance, physical device, logical device, graphics queue
@@ -327,30 +327,12 @@ void Renderer::CreateCommandBuffers() {
 }
 
 void Renderer::CreateDescriptorSetLayout() {
-  VkDescriptorSetLayoutBinding uboLayoutBinding{};
-  uboLayoutBinding.binding = 0;
-  uboLayoutBinding.descriptorCount = 1;
-  uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-  uboLayoutBinding.pImmutableSamplers = nullptr;
-  uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-
-  VkDescriptorSetLayoutBinding samplerLayoutBinding{};
-  samplerLayoutBinding.binding = 1;
-  samplerLayoutBinding.descriptorCount = 1;
-  samplerLayoutBinding.descriptorType =
-      VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  samplerLayoutBinding.pImmutableSamplers = nullptr;
-  samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-  std::array<VkDescriptorSetLayoutBinding, 2> bindings = {uboLayoutBinding,
-                                                          samplerLayoutBinding};
-  VkDescriptorSetLayoutCreateInfo layoutInfo{};
-  layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-  layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
-  layoutInfo.pBindings = bindings.data();
-
-  VK_CHECK(vkCreateDescriptorSetLayout(mDevice, &layoutInfo, nullptr,
-                                       &mDescriptorSetLayout));
+  DescriptorSetLayoutBuilder<2> builder;
+  builder.AddBinding(1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                     VK_SHADER_STAGE_VERTEX_BIT);
+  builder.AddBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                     VK_SHADER_STAGE_FRAGMENT_BIT);
+  mDescriptorSetLayout = builder.Build(mDevice);
 }
 
 void Renderer::CreateTextureImage() {
@@ -364,31 +346,26 @@ void Renderer::CreateTextureImage() {
 
   HKR_ASSERT(pixels);
 
-  VkBuffer stagingBuffer;
-  VmaAllocation stagingBufferAlloc;
-  CreateBuffer(stagingBuffer, stagingBufferAlloc, imageSize,
-               VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-               VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
-                   VMA_ALLOCATION_CREATE_MAPPED_BIT);
-
-  void* data;
-  vmaMapMemory(mAllocator, stagingBufferAlloc, &data);
-  memcpy(data, pixels, static_cast<size_t>(imageSize));
-  vmaUnmapMemory(mAllocator, stagingBufferAlloc);
+  StagingBuffer buffer;
+  buffer.Create(mAllocator, imageSize);
+  buffer.Map(mAllocator);
+  buffer.Write(pixels, static_cast<size_t>(imageSize));
+  buffer.Unmap(mAllocator);
 
   stbi_image_free(pixels);
 
   mTextureImage.Create(mDevice, mAllocator, texWidth, texHeight, mipLevels,
                        VK_FORMAT_R8G8B8A8_SRGB);
 
-  TransitionImageLayout(mDevice, mGraphicsQueue, mCommandPool,
-                        mTextureImage.image, VK_IMAGE_LAYOUT_UNDEFINED,
-                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, mipLevels);
-  CopyBufferToImage(mDevice, mGraphicsQueue, mCommandPool, stagingBuffer,
+  TransitImageLayout(mDevice, mGraphicsQueue, mCommandPool, mTextureImage.image,
+                     VK_IMAGE_LAYOUT_UNDEFINED,
+                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, mipLevels);
+  CopyBufferToImage(mDevice, mGraphicsQueue, mCommandPool, buffer.buffer,
                     mTextureImage.image, static_cast<uint32_t>(texWidth),
                     static_cast<uint32_t>(texHeight));
 
-  vmaDestroyBuffer(mAllocator, stagingBuffer, stagingBufferAlloc);
+  buffer.Cleanup(mAllocator);
+  // vmaDestroyBuffer(mAllocator, stagingBuffer, stagingBufferAlloc);
 
   // transitioned to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL while
   // generating mipmaps
@@ -454,7 +431,7 @@ void Renderer::CreateDescriptorSets() {
 
   for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
     VkDescriptorBufferInfo bufferInfo{};
-    bufferInfo.buffer = mUniformBuffers[i];
+    bufferInfo.buffer = mUniformBuffers[i].buffer;
     bufferInfo.offset = 0;
     bufferInfo.range = sizeof(UniformBufferObject);
 
@@ -689,71 +666,22 @@ void Renderer::LoadModel() {
 
 void Renderer::CreateVertexBuffer() {
   VkDeviceSize bufferSize = sizeof(mVertices[0]) * mVertices.size();
-
-  VkBuffer stagingBuffer;
-  VmaAllocation stagingBufferAlloc;
-  CreateBuffer(stagingBuffer, stagingBufferAlloc, bufferSize,
-               VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-               VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
-                   VMA_ALLOCATION_CREATE_MAPPED_BIT);
-
-  void* data;
-  vmaMapMemory(mAllocator, stagingBufferAlloc, &data);
-  memcpy(data, mVertices.data(), (size_t)bufferSize);
-  vmaUnmapMemory(mAllocator, stagingBufferAlloc);
-
-  CreateBuffer(
-      mVertexBuffer, mVertexBufferAlloc, bufferSize,
-      VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-
-  CopyBuffer(mDevice, mGraphicsQueue, mCommandPool, stagingBuffer,
-             mVertexBuffer, bufferSize);
-
-  vmaDestroyBuffer(mAllocator, stagingBuffer, stagingBufferAlloc);
+  mVertexBuffer.Create(mDevice, mAllocator, mGraphicsQueue, mCommandPool,
+                       mVertices.data(), bufferSize);
 }
 
 void Renderer::CreateIndexBuffer() {
   VkDeviceSize bufferSize = sizeof(mIndices[0]) * mIndices.size();
-
-  VkBuffer stagingBuffer;
-  VmaAllocation stagingBufferAlloc;
-  CreateBuffer(stagingBuffer, stagingBufferAlloc, bufferSize,
-               VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-               VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
-                   VMA_ALLOCATION_CREATE_MAPPED_BIT);
-
-  void* data;
-  vmaMapMemory(mAllocator, stagingBufferAlloc, &data);
-  memcpy(data, mIndices.data(), (size_t)bufferSize);
-  vmaUnmapMemory(mAllocator, stagingBufferAlloc);
-
-  CreateBuffer(
-      mIndexBuffer, mIndexBufferAlloc, bufferSize,
-      VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
-
-  CopyBuffer(mDevice, mGraphicsQueue, mCommandPool, stagingBuffer, mIndexBuffer,
-             bufferSize);
-
-  vmaDestroyBuffer(mAllocator, stagingBuffer, stagingBufferAlloc);
+  mIndexBuffer.Create(mDevice, mAllocator, mGraphicsQueue, mCommandPool,
+                      mIndices.data(), bufferSize);
 }
 
 void Renderer::CreateUniformBuffers() {
   VkDeviceSize bufferSize = sizeof(UniformBufferObject);
 
-  mUniformBuffers.resize(MAX_FRAMES_IN_FLIGHT);
-  mUniformBuffersAlloc.resize(MAX_FRAMES_IN_FLIGHT);
-  mUniformBuffersMapped.resize(MAX_FRAMES_IN_FLIGHT);
-
   for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-    CreateBuffer(
-        mUniformBuffers[i], mUniformBuffersAlloc[i], bufferSize,
-        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-        VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
-            VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT |
-            VMA_ALLOCATION_CREATE_MAPPED_BIT);
-
-    vmaMapMemory(mAllocator, mUniformBuffersAlloc[i],
-                 &mUniformBuffersMapped[i]);
+    mUniformBuffers[i].Create(mAllocator, bufferSize);
+    mUniformBuffers[i].Map(mAllocator);
   }
 }
 
@@ -951,7 +879,8 @@ void Renderer::UpdateUniformBuffer(uint32_t currentImage) {
   ubo.view = mCamera.GetView();
   ubo.proj = mCamera.GetProj();
 
-  memcpy(mUniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
+  mUniformBuffers[currentImage].Write(&ubo, sizeof(ubo));
+  // memcpy(mUniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
 }
 
 void Renderer::RecordCommandBuffer(VkCommandBuffer commandBuffer,
@@ -1041,11 +970,12 @@ void Renderer::RecordCommandBuffer(VkCommandBuffer commandBuffer,
   vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                     mGraphicsPipeline);
 
-  VkBuffer vertexBuffers[] = {mVertexBuffer};
+  VkBuffer vertexBuffers[] = {mVertexBuffer.buffer};
   VkDeviceSize offsets[] = {0};
   vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
 
-  vkCmdBindIndexBuffer(commandBuffer, mIndexBuffer, 0, VK_INDEX_TYPE_UINT32);
+  vkCmdBindIndexBuffer(commandBuffer, mIndexBuffer.buffer, 0,
+                       VK_INDEX_TYPE_UINT32);
 
   vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(mIndices.size()), 1, 0,
                    0, 0);
@@ -1088,20 +1018,20 @@ void Renderer::Cleanup() {
   vkDestroyPipeline(mDevice, mGraphicsPipeline, nullptr);
   vkDestroyPipelineLayout(mDevice, mPipelineLayout, nullptr);
   for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-    vmaUnmapMemory(mAllocator, mUniformBuffersAlloc[i]);
-    vmaDestroyBuffer(mAllocator, mUniformBuffers[i], mUniformBuffersAlloc[i]);
+    mUniformBuffers[i].Unmap(mAllocator);
+    mUniformBuffers[i].Cleanup(mAllocator);
   }
 
   vkDestroyDescriptorPool(mDevice, mDescriptorPool, nullptr);
-  //
+
   vkDestroySampler(mDevice, mTextureSampler, nullptr);
 
   mTextureImage.Cleanup(mDevice, mAllocator);
 
   vkDestroyDescriptorSetLayout(mDevice, mDescriptorSetLayout, nullptr);
 
-  vmaDestroyBuffer(mAllocator, mVertexBuffer, mVertexBufferAlloc);
-  vmaDestroyBuffer(mAllocator, mIndexBuffer, mIndexBufferAlloc);
+  mVertexBuffer.Cleanup(mAllocator);
+  mIndexBuffer.Cleanup(mAllocator);
 
   vmaDestroyAllocator(mAllocator);
 
@@ -1191,7 +1121,7 @@ void Renderer::OnMouseMoveEvent(double x, double y) {
   }
 
   if (mMouse.State.Right) {
-    mCamera.Translate(-0.0f, 0.0f, dy * .005f);
+    mCamera.Translate(0.0f, 0.0f, dy * .005f);
   }
   if (mMouse.State.Middle) {
     mCamera.Translate(-dx * 0.005f, -dy * 0.005f, 0.0f);

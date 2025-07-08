@@ -8,6 +8,7 @@ add_library(
   Core/stb_image.cpp
   Core/tiny_obj_loader.cpp
 
+  Renderer/Buffer.cpp
   Renderer/Image.cpp
   Renderer/Renderer.cpp
   Renderer/vk_mem_alloc.cpp

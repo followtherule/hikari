@@ -1,4 +1,5 @@
 #include "Util/vk_util.h"
+#include "Util/vk_debug.h"
 #include "Util/Assert.h"
 
 namespace hkr {
@@ -29,12 +30,18 @@ void EndOneTimeCommands(VkDevice device,
                         VkCommandBuffer commandBuffer) {
   vkEndCommandBuffer(commandBuffer);
 
-  VkSubmitInfo submitInfo{};
-  submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-  submitInfo.commandBufferCount = 1;
-  submitInfo.pCommandBuffers = &commandBuffer;
+  VkCommandBufferSubmitInfo commandInfo{};
+  commandInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+  commandInfo.pNext = nullptr;
+  commandInfo.commandBuffer = commandBuffer;
+  commandInfo.deviceMask = 0;
 
-  vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE);
+  VkSubmitInfo2 submitInfo{};
+  submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
+  submitInfo.commandBufferInfoCount = 1;
+  submitInfo.pCommandBufferInfos = &commandInfo;
+
+  VK_CHECK(vkQueueSubmit2(queue, 1, &submitInfo, VK_NULL_HANDLE));
   vkQueueWaitIdle(queue);
 
   vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
@@ -71,7 +78,7 @@ void InsertImageMemoryBarrier(VkCommandBuffer cmdbuffer,
   vkCmdPipelineBarrier2(cmdbuffer, &dependInfo);
 }
 
-void TransitionImageLayout(VkDevice device,
+void TransitImageLayout(VkDevice device,
                            VkQueue queue,
                            VkCommandPool commandPool,
                            VkImage image,
