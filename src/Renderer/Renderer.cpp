@@ -1,7 +1,7 @@
 #include "Renderer/Descriptor.h"
 #include "Renderer/Buffer.h"
-#include "hikari/Util/Logger.h"
 #include "Renderer/Renderer.h"
+#include "hikari/Util/Logger.h"
 #include "Core/Math.h"
 #include "Util/Assert.h"
 #include "Util/vk_debug.h"
@@ -11,11 +11,14 @@
 #include "Core/tiny_obj_loader.h"
 
 #include <volk.h>
-#include <VkBootstrap.h>
 #include <vk_mem_alloc.h>
-
-#include <fmt/base.h>
+#include <VkBootstrap.h>
 #include <GLFW/glfw3.h>
+
+#include <imgui.h>
+#include <imgui_impl_glfw.h>
+#include <imgui_impl_vulkan.h>
+#include <vulkan/vulkan_core.h>
 
 #include <chrono>
 #include <vector>
@@ -23,6 +26,7 @@
 #include <fstream>
 
 namespace std {
+
 template <> struct hash<hkr::Vertex> {
   size_t operator()(hkr::Vertex const& vertex) const {
     return ((hash<hkr::Vec3>()(vertex.pos) ^
@@ -41,6 +45,12 @@ struct UniformBufferObject {
 };
 
 namespace {
+
+static void ImGuiCheck(VkResult err) {
+  if (err == VK_SUCCESS) return;
+  HKR_ERROR("[vulkan] Error: VkResult = {}", (int)err);
+  if (err < 0) abort();
+}
 
 std::vector<char> ReadFile(const std::string& filename) {
   std::ifstream file(filename, std::ios::ate | std::ios::binary);
@@ -124,6 +134,8 @@ void Renderer::Init(const AppSettings& settings, GLFWwindow* window) {
 
   CreateSyncObjects();
 
+  InitImGui();
+
   InitCamera();
 }
 
@@ -145,13 +157,19 @@ void Renderer::InitVulkan() {
 #endif
 
   // query and enable instance extension
-  // auto system_info_ret = vkb::SystemInfo::get_system_info();
-  // HKR_ASSERT(system_info_ret);
-  // auto system_info = system_info_ret.value();
-  // if (system_info.is_extension_available(
-  //         "VK_KHR_get_physical_device_properties2")) {
-  //   instance_builder.enable_extension("VK_KHR_get_physical_device_properties2");
-  // }
+  auto system_info_ret = vkb::SystemInfo::get_system_info();
+  HKR_ASSERT(system_info_ret);
+  auto system_info = system_info_ret.value();
+  if (system_info.is_extension_available(
+          VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME)) {
+    instance_builder.enable_extension(
+        VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
+  }
+  if (system_info.is_extension_available(
+          VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME)) {
+    instance_builder.enable_extension(
+        VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+  }
   // uint32_t glfwExtensionCount = 0;
   // const char** glfwExtensions = nullptr;
   // glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
@@ -707,6 +725,112 @@ void Renderer::CreateSyncObjects() {
   }
 }
 
+void Renderer::InitImGui() {
+  // If you wish to load e.g. additional textures you may need to alter pools
+  // sizes and maxSets.
+  {
+    VkDescriptorPoolSize pool_sizes[] = {
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+         IMGUI_IMPL_VULKAN_MINIMUM_IMAGE_SAMPLER_POOL_SIZE},
+    };
+    VkDescriptorPoolCreateInfo pool_info = {};
+    pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    pool_info.maxSets = 0;
+    for (VkDescriptorPoolSize& pool_size : pool_sizes)
+      pool_info.maxSets += pool_size.descriptorCount;
+    pool_info.poolSizeCount = (uint32_t)IM_ARRAYSIZE(pool_sizes);
+    pool_info.pPoolSizes = pool_sizes;
+    VK_CHECK(vkCreateDescriptorPool(mDevice, &pool_info, nullptr,
+                                    &mImGuiDescriptorPool));
+  }
+
+  // Setup Dear ImGui context
+  IMGUI_CHECKVERSION();
+  ImGui::CreateContext();
+  ImGuiIO& io = ImGui::GetIO();
+  (void)io;
+  io.ConfigFlags |=
+      ImGuiConfigFlags_NavEnableKeyboard;  // Enable Keyboard Controls
+  io.ConfigFlags |=
+      ImGuiConfigFlags_NavEnableGamepad;             // Enable Gamepad Controls
+  io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;  // Enable Docking
+  io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;  // Enable Multi-Viewport
+                                                       // / Platform Windows
+  // io.ConfigViewportsNoAutoMerge = true;
+  // io.ConfigViewportsNoTaskBarIcon = true;
+
+  // Setup Dear ImGui style
+  ImGui::StyleColorsDark();
+  // ImGui::StyleColorsLight();
+
+  // When viewports are enabled we tweak WindowRounding/WindowBg so platform
+  // windows can look identical to regular ones.
+  ImGuiStyle& style = ImGui::GetStyle();
+  if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+    style.WindowRounding = 0.0f;
+    style.Colors[ImGuiCol_WindowBg].w = 1.0f;
+  }
+
+  // Setup Platform/Renderer backends
+  ImGui_ImplGlfw_InitForVulkan(mWindow, true);
+  ImGui_ImplVulkan_InitInfo init_info{};
+  // init_info.ApiVersion = VK_API_VERSION_1_3;              // Pass in your
+  // value of VkApplicationInfo::apiVersion, otherwise will default to header
+  // version.
+  init_info.Instance = mInstance;
+  init_info.PhysicalDevice = mPhysDevice;
+  init_info.Device = mDevice;
+  init_info.QueueFamily = mGraphicsFamilyIndex;
+  init_info.Queue = mGraphicsQueue;
+  init_info.PipelineCache = mPipelineCache;
+  init_info.DescriptorPool = mImGuiDescriptorPool;
+  // init_info.RenderPass = mRenderPass;
+  // init_info.Subpass = 0;
+
+  VkPipelineRenderingCreateInfoKHR pipelineRenderingCI{};
+  pipelineRenderingCI.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
+  pipelineRenderingCI.colorAttachmentCount = 1;
+  pipelineRenderingCI.pColorAttachmentFormats = &mSwapchainImageFormat;
+  // pipelineRenderingCI.depthAttachmentFormat = FindDepthFormat();
+  // if (mRequireStencil) {
+  //   pipelineRenderingCI.stencilAttachmentFormat = FindDepthFormat();
+  // }
+  init_info.UseDynamicRendering = true;
+  init_info.PipelineRenderingCreateInfo = pipelineRenderingCI;
+  init_info.MinImageCount = static_cast<uint32_t>(mSwapchainImages.size());
+  init_info.ImageCount = static_cast<uint32_t>(mSwapchainImages.size());
+  init_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+  init_info.Allocator = nullptr;
+  init_info.CheckVkResultFn = ImGuiCheck;
+  ImGui_ImplVulkan_Init(&init_info);
+
+  // Load Fonts
+  // - If no fonts are loaded, dear imgui will use the default font. You can
+  // also load multiple fonts and use ImGui::PushFont()/PopFont() to select
+  // them.
+  // - AddFontFromFileTTF() will return the ImFont* so you can store it if you
+  // need to select the font among multiple.
+  // - If the file cannot be loaded, the function will return a nullptr. Please
+  // handle those errors in your application (e.g. use an assertion, or display
+  // an error and quit).
+  // - Use '#define IMGUI_ENABLE_FREETYPE' in your imconfig file to use Freetype
+  // for higher quality font rendering.
+  // - Read 'docs/FONTS.md' for more instructions and details.
+  // - Remember that in C/C++ if you want to include a backslash \ in a string
+  // literal you need to write a double backslash \\ !
+  // style.FontSizeBase = 20.0f;
+  // io.Fonts->AddFontDefault();
+  // io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\segoeui.ttf");
+  // io.Fonts->AddFontFromFileTTF("../../misc/fonts/DroidSans.ttf");
+  // io.Fonts->AddFontFromFileTTF("../../misc/fonts/Roboto-Medium.ttf");
+  // io.Fonts->AddFontFromFileTTF("../../misc/fonts/Cousine-Regular.ttf");
+  // ImFont* font =
+  // io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\ArialUni.ttf");
+  // IM_ASSERT(font != nullptr);
+}
+
 // VkSampleCountFlagBits Renderer::GetMaxUsableSampleCount() {
 //   VkPhysicalDeviceProperties physicalDeviceProperties;
 //   vkGetPhysicalDeviceProperties(mPhysicalDevice,
@@ -777,6 +901,8 @@ void Renderer::DrawFrame() {
   if (mFramebufferResized) {
     mFramebufferResized = false;
     RecreateSwapchain();
+    ImGui_ImplVulkan_SetMinImageCount(
+        static_cast<uint32_t>(mSwapchainImages.size()));
     return;
   }
 
@@ -799,8 +925,8 @@ void Renderer::DrawFrame() {
 
   // Pipeline stage at which the queue submission will wait (via
   // pWaitSemaphores)
-  VkPipelineStageFlags waitStages[] = {
-      VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+  // VkPipelineStageFlags waitStages[] = {
+  //     VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
 
   VkCommandBufferSubmitInfo commandInfo{};
   commandInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
@@ -989,11 +1115,19 @@ void Renderer::RecordCommandBuffer(VkCommandBuffer commandBuffer,
                     .height = static_cast<uint32_t>(mHeight)};
   CopyImageToImage(commandBuffer, mColorImage.image,
                    mSwapchainImages[imageIndex], extent, extent);
+
   InsertImageMemoryBarrier(
       commandBuffer, mSwapchainImages[imageIndex],
       VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_2_NONE,
       VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 0,
-      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+      VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1});
+  DrawImGui(commandBuffer, imageIndex);
+  InsertImageMemoryBarrier(
+      commandBuffer, mSwapchainImages[imageIndex],
+      VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_2_NONE,
+      VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 0,
+      VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
       VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1});
 
   // InsertImageMemoryBarrier(
@@ -1017,8 +1151,149 @@ void Renderer::Render() {
   mCamera.Update(frameTimer);
 }
 
+void Renderer::DrawImGui(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
+  // Start the Dear ImGui frame
+  ImGui_ImplVulkan_NewFrame();
+  ImGui_ImplGlfw_NewFrame();
+  ImGui::NewFrame();
+
+  // 1. Show the big demo window (Most of the sample code is in
+  // ImGui::ShowDemoWindow()! You can browse its code to learn more about Dear
+  // ImGui!).
+
+  static bool show_demo_window = true;
+  static bool show_another_window = true;
+  static ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
+  ImGuiIO& io = ImGui::GetIO();
+  (void)io;
+  if (show_demo_window) ImGui::ShowDemoWindow(&show_demo_window);
+
+  // 2. Show a simple window that we create ourselves. We use a Begin/End pair
+  // to create a named window.
+  {
+    static float f = 0.0f;
+    static int counter = 0;
+
+    ImGui::Begin("Hello, world!");  // Create a window called "Hello, world!"
+                                    // and append into it.
+
+    ImGui::Text("This is some useful text.");  // Display some text (you can use
+                                               // a format strings too)
+    ImGui::Checkbox(
+        "Demo Window",
+        &show_demo_window);  // Edit bools storing our window open/close state
+    ImGui::Checkbox("Another Window", &show_another_window);
+
+    ImGui::SliderFloat("float", &f, 0.0f,
+                       1.0f);  // Edit 1 float using a slider from 0.0f to 1.0f
+    ImGui::ColorEdit3(
+        "clear color",
+        (float*)&clear_color);  // Edit 3 floats representing a color
+
+    if (ImGui::Button("Button"))  // Buttons return true when clicked (most
+                                  // widgets return true when edited/activated)
+      counter++;
+    ImGui::SameLine();
+    ImGui::Text("counter = %d", counter);
+
+    ImGui::Text("Application average %.3f ms/frame (%.1f FPS)",
+                1000.0f / io.Framerate, io.Framerate);
+    ImGui::End();
+  }
+
+  // 3. Show another simple window.
+  if (show_another_window) {
+    ImGui::Begin(
+        "Another Window",
+        &show_another_window);  // Pass a pointer to our bool variable (the
+                                // window will have a closing button that will
+                                // clear the bool when clicked)
+    ImGui::Text("Hello from another window!");
+    if (ImGui::Button("Close Me")) show_another_window = false;
+    ImGui::End();
+  }
+
+  // Rendering
+  ImGui::Render();
+  ImDrawData* main_draw_data = ImGui::GetDrawData();
+  const bool main_is_minimized = (main_draw_data->DisplaySize.x <= 0.0f ||
+                                  main_draw_data->DisplaySize.y <= 0.0f);
+  if (!main_is_minimized) {
+    // Color attachment
+    VkRenderingAttachmentInfo colorAttachment{
+        VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+    colorAttachment.imageView = mSwapchainImageViews[imageIndex];
+    colorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    // // Depth/stencil attachment
+    // VkRenderingAttachmentInfo depthStencilAttachment{
+    //     VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+    // depthStencilAttachment.imageView = mDepthImage.imageView;
+    // depthStencilAttachment.imageLayout =
+    //     VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    // depthStencilAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    // depthStencilAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    // depthStencilAttachment.clearValue.depthStencil = {1.0f, 0};
+
+    VkRenderingInfo renderingInfo{VK_STRUCTURE_TYPE_RENDERING_INFO_KHR};
+    renderingInfo.renderArea.offset = {0, 0};
+    renderingInfo.renderArea.extent = {static_cast<uint32_t>(mWidth),
+                                       static_cast<uint32_t>(mHeight)};
+    renderingInfo.layerCount = 1;
+    renderingInfo.colorAttachmentCount = 1;
+    renderingInfo.pColorAttachments = &colorAttachment;
+    // renderingInfo.pDepthAttachment = &depthStencilAttachment;
+    // if (mRequireStencil) {
+    //   renderingInfo.pStencilAttachment = &depthStencilAttachment;
+    // } else {
+    //   renderingInfo.pStencilAttachment = nullptr;
+    // }
+
+    // std::array<VkClearValue, 2> clearValues{};
+    // clearValues[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+    // clearValues[1].depthStencil = {1.0f, 0};
+
+    vkCmdBeginRendering(commandBuffer, &renderingInfo);
+
+    VkViewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = (float)mWidth;
+    viewport.height = (float)mHeight;
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+
+    VkRect2D scissor{};
+    scissor.offset = {0, 0};
+    scissor.extent = {static_cast<uint32_t>(mWidth),
+                      static_cast<uint32_t>(mHeight)};
+    vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+
+    // Record dear imgui primitives into command buffer
+    ImGui_ImplVulkan_RenderDrawData(main_draw_data, commandBuffer);
+
+    vkCmdEndRendering(commandBuffer);
+  }
+
+  // Update and Render additional Platform Windows
+  if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+    ImGui::UpdatePlatformWindows();
+    ImGui::RenderPlatformWindowsDefault();
+  }
+}
+
+void Renderer::CleanupImGui() {
+  ImGui_ImplVulkan_Shutdown();
+  ImGui_ImplGlfw_Shutdown();
+  ImGui::DestroyContext();
+}
+
 void Renderer::Cleanup() {
   vkDeviceWaitIdle(mDevice);
+
+  CleanupImGui();
 
   mColorImage.Cleanup(mDevice, mAllocator);
   mDepthImage.Cleanup(mDevice, mAllocator);
@@ -1035,6 +1310,7 @@ void Renderer::Cleanup() {
     mUniformBuffers[i].Cleanup(mAllocator);
   }
 
+  vkDestroyDescriptorPool(mDevice, mImGuiDescriptorPool, nullptr);
   vkDestroyDescriptorPool(mDevice, mDescriptorPool, nullptr);
 
   vkDestroySampler(mDevice, mTextureSampler, nullptr);
@@ -1082,6 +1358,10 @@ void Renderer::InitCamera() {
 }
 
 void Renderer::OnKeyEvent(int key, int action) {
+  ImGuiIO& io = ImGui::GetIO();
+  if (io.WantCaptureKeyboard) {
+    return;
+  }
   switch (key) {
     case GLFW_KEY_W:
       mCamera.State.Up = !!action;
@@ -1107,6 +1387,10 @@ void Renderer::OnKeyEvent(int key, int action) {
 }
 
 void Renderer::OnMouseEvent(int button, int action) {
+  ImGuiIO& io = ImGui::GetIO();
+  if (io.WantCaptureMouse) {
+    return;
+  }
   switch (button) {
     case GLFW_MOUSE_BUTTON_LEFT:
       mMouse.State.Left = !!action;

@@ -17,12 +17,19 @@ add_library(
   Util/Logger.cpp
   Util/vk_util.cpp
 
-  # volk
+  $<TARGET_OBJECTS:imgui>
 )
 
 add_library(${PROJECT_NAME}::hikari ALIAS hikari)
 
-target_link_libraries(hikari PRIVATE project_options project_warnings volk_headers)
+target_link_libraries(
+  hikari
+  PRIVATE
+  project_options
+  project_warnings
+  volk_headers
+  imgui
+)
 
 # Vulkan SDK version: 1.4.304.1
 # find_package(Vulkan REQUIRED)
@@ -99,6 +106,7 @@ target_compile_definitions(
   hikari
   PRIVATE
   GLFW_INCLUDE_NONE
+  GLFW_INCLUDE_VULKAN
   VK_NO_PROTOTYPES
   VMA_STATIC_VULKAN_FUNCTIONS=0
   VMA_DYNAMIC_VULKAN_FUNCTIONS=0

@@ -54,9 +54,9 @@ add_library(${PROJECT_NAME}::project_warnings ALIAS project_warnings)
 # configure files based on CMake configuration options
 # add_subdirectory(configured_files)
 
+add_subdirectory(third_party)
+
 # Adding the src:
 add_subdirectory(src)
-
-add_subdirectory(third_party)
 
 add_subdirectory(samples)

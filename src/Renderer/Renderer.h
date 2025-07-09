@@ -98,6 +98,9 @@ private:
   void CreateDescriptorPool();
   void CreateDescriptorSets();
   void CreateSyncObjects();
+  void InitImGui();
+  void CleanupImGui();
+  void DrawImGui(VkCommandBuffer commandBuffer, uint32_t imageIndex);
 
   // VkSampleCountFlagBits GetMaxUsableSampleCount();
   VkFormat FindSupportedFormat(const std::vector<VkFormat>& candidates,
@@ -160,6 +163,7 @@ private:
 
   VkDescriptorSetLayout mDescriptorSetLayout;
   VkDescriptorPool mDescriptorPool;
+  VkDescriptorPool mImGuiDescriptorPool;
   std::vector<VkDescriptorSet> mDescriptorSets;
 
   VkPipelineCache mPipelineCache{VK_NULL_HANDLE};
