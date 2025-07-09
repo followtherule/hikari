@@ -12,22 +12,25 @@ add_library(
   Renderer/Image.cpp
   Renderer/Renderer.cpp
   Renderer/vk_mem_alloc.cpp
+  Renderer/volk_impl.cpp
 
   Util/Logger.cpp
   Util/vk_util.cpp
+
+  # volk
 )
 
 add_library(${PROJECT_NAME}::hikari ALIAS hikari)
 
-target_link_libraries(hikari PRIVATE project_options project_warnings)
+target_link_libraries(hikari PRIVATE project_options project_warnings volk_headers)
 
 # Vulkan SDK version: 1.4.304.1
-find_package(Vulkan REQUIRED)
+# find_package(Vulkan REQUIRED)
 
 target_link_system_libraries(
   hikari
   PRIVATE
-  Vulkan::Vulkan
+  # Vulkan::Vulkan
   glfw
   glm::glm
   vk-bootstrap::vk-bootstrap
@@ -68,10 +71,37 @@ generate_export_header(hikari
 BASE_NAME hkr
 EXPORT_FILE_NAME ${PROJECT_BINARY_DIR}/include/hikari/hikari_export.hpp)
 
+# choose WSI for linux box
+set(WSI_SELECT XCB CACHE STRING "Choose the WSI.")
+set_property(
+  CACHE WSI_SELECT
+  PROPERTY STRINGS
+  "XCB" "XLIB" "WAYLAND"
+)
+if(WIN32 OR APPLE)
+  mark_as_advanced(WSI_SELECT)
+endif()
+
+if(WIN32)
+  target_compile_definitions(hikari PRIVATE VK_USE_PLATFORM_WIN32_KHR)
+elseif(APPLE)
+  target_compile_definitions(hikari PRIVATE VK_USE_PLATFORM_METAL_EXT)
+elseif(UNIX)
+  if(WSI_SELECT STREQUAL XCB)
+    target_compile_definitions(hikari PRIVATE VK_USE_PLATFORM_XCB_KHR)
+  elseif(WSI_SELECT STREQUAL XLIB)
+    target_compile_definitions(hikari PRIVATE VK_USE_PLATFORM_XLIB_KHR)
+  elseif(WSI_SELECT STREQUAL WAYLAND)
+    target_compile_definitions(hikari PRIVATE VK_USE_PLATFORM_WAYLAND_KHR)
+  endif()
+endif()
 target_compile_definitions(
   hikari
   PRIVATE
   GLFW_INCLUDE_NONE
+  VK_NO_PROTOTYPES
+  VMA_STATIC_VULKAN_FUNCTIONS=0
+  VMA_DYNAMIC_VULKAN_FUNCTIONS=0
   $<$<CONFIG:Debug>:HKR_DEBUG>
   $<$<CONFIG:Debug>:ENABLE_VALIDATION_LAYER>
   $<$<CONFIG:Release>:HKR_RELEASE>

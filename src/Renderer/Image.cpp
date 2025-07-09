@@ -1,8 +1,5 @@
 #include "Renderer/Image.h"
-#include "Renderer/Buffer.h"
 #include "Util/vk_debug.h"
-
-#include <vulkan/vulkan_core.h>
 
 namespace {
 
@@ -140,10 +137,11 @@ void ColorImage2D::Create(VkDevice device,
                           uint32_t mipLevels,
                           VkFormat format,
                           VkSampleCountFlagBits numSamples) {
-  Image2D::Create(device, allocator, VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT,
-                  width, height, mipLevels, format, numSamples,
-                  VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT |
-                      VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
+  Image2D::Create(
+      device, allocator, VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT, width,
+      height, mipLevels, format, numSamples,
+      // VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT |
+      VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
 }
 
 void ColorImage2D::Cleanup(VkDevice device, VmaAllocator allocator) {

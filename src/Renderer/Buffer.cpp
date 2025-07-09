@@ -1,5 +1,4 @@
 #include "Renderer/Buffer.h"
-#include <vulkan/vulkan_core.h>
 #include "Util/vk_util.h"
 
 #include <cstring>
@@ -121,7 +120,9 @@ void VertexBuffer::Create(VkDevice device,
       allocator, 0, size,
       VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
 
-  CopyBuffer(device, queue, commandPool, stagingBuffer.buffer, buffer, size);
+  VkCommandBuffer commandBuffer = BeginOneTimeCommands(device, commandPool);
+  CopyBufferToBuffer(commandBuffer, stagingBuffer.buffer, buffer, size);
+  EndOneTimeCommands(device, queue, commandPool, commandBuffer);
   stagingBuffer.Cleanup(allocator);
 }
 
@@ -153,7 +154,9 @@ void IndexBuffer::Create(VkDevice device,
       allocator, 0, size,
       VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
 
-  CopyBuffer(device, queue, commandPool, stagingBuffer.buffer, buffer, size);
+  VkCommandBuffer commandBuffer = BeginOneTimeCommands(device, commandPool);
+  CopyBufferToBuffer(commandBuffer, stagingBuffer.buffer, buffer, size);
+  EndOneTimeCommands(device, queue, commandPool, commandBuffer);
   stagingBuffer.Cleanup(allocator);
 }
 

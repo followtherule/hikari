@@ -1,9 +1,8 @@
+#include "Renderer/Descriptor.h"
 #include "Renderer/Buffer.h"
 #include "hikari/Util/Logger.h"
-#include "Renderer/Descriptor.h"
 #include "Renderer/Renderer.h"
 #include "Core/Math.h"
-#include "Core/Window.h"
 #include "Util/Assert.h"
 #include "Util/vk_debug.h"
 #include "Util/vk_util.h"
@@ -11,16 +10,14 @@
 #include "Core/stb_image.h"
 #include "Core/tiny_obj_loader.h"
 
+#include <volk.h>
 #include <VkBootstrap.h>
 #include <vk_mem_alloc.h>
 
 #include <fmt/base.h>
 #include <GLFW/glfw3.h>
-#include <vulkan/vulkan.h>
-#include <vulkan/vulkan_core.h>
 
 #include <chrono>
-#include <memory>
 #include <vector>
 #include <cstring>
 #include <fstream>
@@ -133,6 +130,8 @@ void Renderer::Init(const AppSettings& settings, GLFWwindow* window) {
 Renderer::~Renderer() { Cleanup(); }
 
 void Renderer::InitVulkan() {
+  VK_CHECK(volkInitialize());
+
   // 1. create instance
   vkb::InstanceBuilder instance_builder;
   instance_builder.set_app_name(mAppName)
@@ -162,6 +161,7 @@ void Renderer::InitVulkan() {
   HKR_ASSERT(inst_ret);
   vkb::Instance vkb_inst = inst_ret.value();
   mInstance = vkb_inst.instance;
+  volkLoadInstance(mInstance);
   mDebugMessenger = vkb_inst.debug_messenger;
 
   VK_CHECK(glfwCreateWindowSurface(mInstance, mWindow, NULL, &mSurface));
@@ -215,6 +215,7 @@ void Renderer::InitVulkan() {
   HKR_ASSERT(dev_ret);
   vkb::Device vkb_device = dev_ret.value();
   mDevice = vkb_device.device;
+  volkLoadDevice(mDevice);
 
   // 4. get graphics queue
   auto graphics_queue_ret = vkb_device.get_queue(vkb::QueueType::graphics);
@@ -224,19 +225,17 @@ void Renderer::InitVulkan() {
       vkb_device.get_queue_index(vkb::QueueType::graphics).value();
 
   // 5. setup vma allocator
-  // VmaVulkanFunctions vulkanFunctions{};
-  // vulkanFunctions.vkGetInstanceProcAddr = &vkGetInstanceProcAddr;
-  // vulkanFunctions.vkGetDeviceProcAddr = &vkGetDeviceProcAddr;
-
   VmaAllocatorCreateInfo allocatorInfo{};
   allocatorInfo.flags = VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT;
   allocatorInfo.vulkanApiVersion = VK_API_VERSION_1_4;
   allocatorInfo.physicalDevice = mPhysDevice;
   allocatorInfo.device = mDevice;
   allocatorInfo.instance = mInstance;
-  // allocatorInfo.pVulkanFunctions = &vulkanFunctions;
+  VmaVulkanFunctions vulkanFunctions{};
+  VK_CHECK(vmaImportVulkanFunctionsFromVolk(&allocatorInfo, &vulkanFunctions));
+  allocatorInfo.pVulkanFunctions = &vulkanFunctions;
 
-  vmaCreateAllocator(&allocatorInfo, &mAllocator);
+  VK_CHECK(vmaCreateAllocator(&allocatorInfo, &mAllocator));
 }  // namespace hkr
 
 void Renderer::CreateSwapchain() {
@@ -357,20 +356,21 @@ void Renderer::CreateTextureImage() {
   mTextureImage.Create(mDevice, mAllocator, texWidth, texHeight, mipLevels,
                        VK_FORMAT_R8G8B8A8_SRGB);
 
-  TransitImageLayout(mDevice, mGraphicsQueue, mCommandPool, mTextureImage.image,
+  VkCommandBuffer commandBuffer = BeginOneTimeCommands(mDevice, mCommandPool);
+  TransitImageLayout(commandBuffer, mTextureImage.image,
                      VK_IMAGE_LAYOUT_UNDEFINED,
                      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, mipLevels);
-  CopyBufferToImage(mDevice, mGraphicsQueue, mCommandPool, buffer.buffer,
-                    mTextureImage.image, static_cast<uint32_t>(texWidth),
+  CopyBufferToImage(commandBuffer, buffer.buffer, mTextureImage.image,
+                    static_cast<uint32_t>(texWidth),
                     static_cast<uint32_t>(texHeight));
+  GenerateMipmaps(commandBuffer, mTextureImage.image, texWidth, texHeight,
+                  mipLevels);
+  EndOneTimeCommands(mDevice, mGraphicsQueue, mCommandPool, commandBuffer);
 
   buffer.Cleanup(mAllocator);
-  // vmaDestroyBuffer(mAllocator, stagingBuffer, stagingBufferAlloc);
 
   // transitioned to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL while
   // generating mipmaps
-  GenerateMipmaps(mDevice, mGraphicsQueue, mCommandPool, mTextureImage.image,
-                  texWidth, texHeight, mipLevels);
 }
 
 void Renderer::CreateTextureSampler() {
@@ -681,6 +681,7 @@ void Renderer::CreateUniformBuffers() {
 
   for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
     mUniformBuffers[i].Create(mAllocator, bufferSize);
+    // map buffer for the whole app lifetime
     mUniformBuffers[i].Map(mAllocator);
   }
 }
@@ -770,26 +771,6 @@ VkFormat Renderer::FindDepthFormat() {
         VK_IMAGE_TILING_OPTIMAL,
         VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT);
   }
-}
-
-void Renderer::CreateBuffer(VkBuffer& buffer,
-                            VmaAllocation& alloc,
-                            VkDeviceSize size,
-                            VkBufferUsageFlags usage,
-                            VmaAllocationCreateFlags allocFlags) {
-  VkBufferCreateInfo bufferInfo{};
-  bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-  bufferInfo.size = size;
-  bufferInfo.usage = usage;
-  bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-  VmaAllocationCreateInfo allocCreateInfo = {};
-  allocCreateInfo.flags = allocFlags;
-  allocCreateInfo.usage = VMA_MEMORY_USAGE_AUTO;
-
-  VmaAllocationInfo allocInfo;
-  vmaCreateBuffer(mAllocator, &bufferInfo, &allocCreateInfo, &buffer, &alloc,
-                  &allocInfo);
 }
 
 void Renderer::DrawFrame() {
@@ -890,12 +871,19 @@ void Renderer::RecordCommandBuffer(VkCommandBuffer commandBuffer,
   VK_CHECK(vkBeginCommandBuffer(commandBuffer, &beginInfo));
 
   InsertImageMemoryBarrier(
-      commandBuffer, mSwapchainImages[imageIndex],
+      commandBuffer, mColorImage.image,
       VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
       VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, 0,
       VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
       VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
       VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1});
+  // InsertImageMemoryBarrier(
+  //     commandBuffer, mSwapchainImages[imageIndex],
+  //     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+  //     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, 0,
+  //     VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+  //     VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+  //     VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1});
 
   VkImageAspectFlags aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
   if (mRequireStencil) {
@@ -914,7 +902,8 @@ void Renderer::RecordCommandBuffer(VkCommandBuffer commandBuffer,
   // Color attachment
   VkRenderingAttachmentInfo colorAttachment{
       VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-  colorAttachment.imageView = mSwapchainImageViews[imageIndex];
+  colorAttachment.imageView = mColorImage.imageView;
+  // colorAttachment.imageView = mSwapchainImageViews[imageIndex];
   colorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
   colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
   colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -984,11 +973,35 @@ void Renderer::RecordCommandBuffer(VkCommandBuffer commandBuffer,
   // This barrier prepares the color image for presentation, we don't need to
   // care for the depth image
   InsertImageMemoryBarrier(
+      commandBuffer, mColorImage.image,
+      VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_2_NONE,
+      VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 0,
+      VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+      VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1});
+  InsertImageMemoryBarrier(
+      commandBuffer, mSwapchainImages[imageIndex],
+      VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_2_NONE,
+      VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 0, VK_IMAGE_LAYOUT_UNDEFINED,
+      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+      VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1});
+
+  VkExtent2D extent{.width = static_cast<uint32_t>(mWidth),
+                    .height = static_cast<uint32_t>(mHeight)};
+  CopyImageToImage(commandBuffer, mColorImage.image,
+                   mSwapchainImages[imageIndex], extent, extent);
+  InsertImageMemoryBarrier(
       commandBuffer, mSwapchainImages[imageIndex],
       VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_2_NONE,
       VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 0,
-      VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
       VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1});
+
+  // InsertImageMemoryBarrier(
+  //     commandBuffer, mSwapchainImages[imageIndex],
+  //     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+  //     VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 0,
+  //     VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+  //     VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1});
 
   VK_CHECK(vkEndCommandBuffer(commandBuffer));
 }

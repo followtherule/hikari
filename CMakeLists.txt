@@ -57,4 +57,6 @@ add_library(${PROJECT_NAME}::project_warnings ALIAS project_warnings)
 # Adding the src:
 add_subdirectory(src)
 
+add_subdirectory(third_party)
+
 add_subdirectory(samples)

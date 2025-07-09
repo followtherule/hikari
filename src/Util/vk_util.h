@@ -22,35 +22,33 @@ void InsertImageMemoryBarrier(VkCommandBuffer cmdbuffer,
                               VkImageLayout newImageLayout,
                               VkImageSubresourceRange subresourceRange);
 
-void TransitImageLayout(VkDevice device,
-                        VkQueue queue,
-                        VkCommandPool commandPool,
+void TransitImageLayout(VkCommandBuffer commandBuffer,
                         VkImage image,
                         VkImageLayout oldLayout,
                         VkImageLayout newLayout,
                         uint32_t mipLevels);
 
-void GenerateMipmaps(VkDevice device,
-                     VkQueue queue,
-                     VkCommandPool commandPool,
+void GenerateMipmaps(VkCommandBuffer commandBuffer,
                      VkImage image,
                      int32_t texWidth,
                      int32_t texHeight,
                      uint32_t mipLevels);
 
-void CopyBufferToImage(VkDevice device,
-                       VkQueue queue,
-                       VkCommandPool commandPool,
+void CopyBufferToImage(VkCommandBuffer commandBuffer,
                        VkBuffer buffer,
                        VkImage image,
                        uint32_t width,
                        uint32_t height);
 
-void CopyBuffer(VkDevice device,
-                VkQueue queue,
-                VkCommandPool commandPool,
-                VkBuffer srcBuffer,
-                VkBuffer dstBuffer,
-                VkDeviceSize size);
+void CopyBufferToBuffer(VkCommandBuffer commandBuffer,
+                        VkBuffer srcBuffer,
+                        VkBuffer dstBuffer,
+                        VkDeviceSize size);
+
+void CopyImageToImage(VkCommandBuffer commandBuffer,
+                      VkImage src,
+                      VkImage dst,
+                      VkExtent2D srcExtent,
+                      VkExtent2D dstExtent);
 
 }  // namespace hkr
