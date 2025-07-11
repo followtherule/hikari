@@ -12,12 +12,11 @@ namespace hkr {
 
 class Window {
 public:
-  ~Window();
   void Init(App* app, int width, int height, const char* appName);
+  void Cleanup();
   GLFWwindow* GetWindow() const { return mWindow; }
 
 private:
-  void Cleanup();
   void SetCallback();
 
   GLFWwindow* mWindow;

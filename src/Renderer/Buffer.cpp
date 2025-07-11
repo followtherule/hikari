@@ -5,17 +5,17 @@
 
 namespace hkr {
 
-Buffer::Buffer(VmaAllocator allocator,
-               VmaAllocationCreateFlags allocFlags,
-               VkDeviceSize size,
-               VkBufferUsageFlags usage) {
+BufferBase::BufferBase(VmaAllocator allocator,
+                       VmaAllocationCreateFlags allocFlags,
+                       VkDeviceSize size,
+                       VkBufferUsageFlags2 usage) {
   Create(allocator, allocFlags, size, usage);
 }
 
-void Buffer::Create(VmaAllocator allocator,
-                    VmaAllocationCreateFlags allocFlags,
-                    VkDeviceSize size,
-                    VkBufferUsageFlags usage) {
+void BufferBase::Create(VmaAllocator allocator,
+                        VmaAllocationCreateFlags allocFlags,
+                        VkDeviceSize size,
+                        VkBufferUsageFlags2 usage) {
   VkBufferCreateInfo bufferInfo{};
   bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
   bufferInfo.size = size;
@@ -31,30 +31,31 @@ void Buffer::Create(VmaAllocator allocator,
                   &allocation, &allocInfo);
 }
 
-void Buffer::Cleanup(VmaAllocator allocator) {
+void BufferBase::Cleanup(VmaAllocator allocator) {
   vmaDestroyBuffer(allocator, buffer, allocation);
 }
 
 MappableBuffer::MappableBuffer(VmaAllocator allocator,
                                VmaAllocationCreateFlags allocFlags,
                                VkDeviceSize size,
-                               VkBufferUsageFlags usage) {
+                               VkBufferUsageFlags2 usage) {
   Create(allocator, allocFlags, size, usage);
 }
 
 void MappableBuffer::Create(VmaAllocator allocator,
                             VmaAllocationCreateFlags allocFlags,
                             VkDeviceSize size,
-                            VkBufferUsageFlags usage) {
-  Buffer::Create(allocator, allocFlags, size, usage);
+                            VkBufferUsageFlags2 usage) {
+  BufferBase::Create(allocator, allocFlags, size, usage);
 }
 
 void MappableBuffer::Cleanup(VmaAllocator allocator) {
-  Buffer::Cleanup(allocator);
+  BufferBase::Cleanup(allocator);
 }
 
-void MappableBuffer::Map(VmaAllocator allocator) {
+void* MappableBuffer::Map(VmaAllocator allocator) {
   vmaMapMemory(allocator, allocation, &map);
+  return map;
 }
 
 void MappableBuffer::Unmap(VmaAllocator allocator) {
@@ -73,7 +74,7 @@ void UniformBuffer::Create(VmaAllocator allocator, VkDeviceSize size) {
       VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
           VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT |
           VMA_ALLOCATION_CREATE_MAPPED_BIT,
-      size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
+      size, VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT);
 }
 
 void UniformBuffer::Cleanup(VmaAllocator allocator) {
@@ -89,36 +90,40 @@ void StagingBuffer::Create(VmaAllocator allocator, VkDeviceSize size) {
       allocator,
       VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
           VMA_ALLOCATION_CREATE_MAPPED_BIT,
-      size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+      size, VK_BUFFER_USAGE_2_TRANSFER_SRC_BIT);
 }
 
 void StagingBuffer::Cleanup(VmaAllocator allocator) {
   MappableBuffer::Cleanup(allocator);
 }
 
-VertexBuffer::VertexBuffer(VkDevice device,
-                           VmaAllocator allocator,
-                           VkQueue queue,
-                           VkCommandPool commandPool,
-                           void* data,
-                           VkDeviceSize size) {
-  Create(device, allocator, queue, commandPool, data, size);
+Buffer::Buffer(VmaAllocator allocator,
+               VkDeviceSize size,
+               VkBufferUsageFlags2 usage) {
+  Create(allocator, size, usage);
 }
 
-void VertexBuffer::Create(VkDevice device,
-                          VmaAllocator allocator,
-                          VkQueue queue,
-                          VkCommandPool commandPool,
-                          void* data,
-                          VkDeviceSize size) {
+void Buffer::Create(VmaAllocator allocator,
+                    VkDeviceSize size,
+                    VkBufferUsageFlags2 usage) {
+  BufferBase::Create(allocator, 0, size,
+                     VK_BUFFER_USAGE_2_TRANSFER_DST_BIT | usage);
+}
+
+void Buffer::Create(VkDevice device,
+                    VmaAllocator allocator,
+                    VkQueue queue,
+                    VkCommandPool commandPool,
+                    void* data,
+                    VkDeviceSize size,
+                    VkBufferUsageFlags2 usage) {
   StagingBuffer stagingBuffer;
   stagingBuffer.Create(allocator, size);
   stagingBuffer.Map(allocator);
   stagingBuffer.Write(data, size);
   stagingBuffer.Unmap(allocator);
-  Buffer::Create(
-      allocator, 0, size,
-      VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+  BufferBase::Create(allocator, 0, size,
+                     VK_BUFFER_USAGE_2_TRANSFER_DST_BIT | usage);
 
   VkCommandBuffer commandBuffer = BeginOneTimeCommands(device, commandPool);
   CopyBufferToBuffer(commandBuffer, stagingBuffer.buffer, buffer, size);
@@ -126,42 +131,6 @@ void VertexBuffer::Create(VkDevice device,
   stagingBuffer.Cleanup(allocator);
 }
 
-void VertexBuffer::Cleanup(VmaAllocator allocator) {
-  Buffer::Cleanup(allocator);
-}
-
-IndexBuffer::IndexBuffer(VkDevice device,
-                         VmaAllocator allocator,
-                         VkQueue queue,
-                         VkCommandPool commandPool,
-                         void* data,
-                         VkDeviceSize size) {
-  Create(device, allocator, queue, commandPool, data, size);
-}
-
-void IndexBuffer::Create(VkDevice device,
-                         VmaAllocator allocator,
-                         VkQueue queue,
-                         VkCommandPool commandPool,
-                         void* data,
-                         VkDeviceSize size) {
-  StagingBuffer stagingBuffer;
-  stagingBuffer.Create(allocator, size);
-  stagingBuffer.Map(allocator);
-  stagingBuffer.Write(data, size);
-  stagingBuffer.Unmap(allocator);
-  Buffer::Create(
-      allocator, 0, size,
-      VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
-
-  VkCommandBuffer commandBuffer = BeginOneTimeCommands(device, commandPool);
-  CopyBufferToBuffer(commandBuffer, stagingBuffer.buffer, buffer, size);
-  EndOneTimeCommands(device, queue, commandPool, commandBuffer);
-  stagingBuffer.Cleanup(allocator);
-}
-
-void IndexBuffer::Cleanup(VmaAllocator allocator) {
-  Buffer::Cleanup(allocator);
-}
+void Buffer::Cleanup(VmaAllocator allocator) { BufferBase::Cleanup(allocator); }
 
 }  // namespace hkr

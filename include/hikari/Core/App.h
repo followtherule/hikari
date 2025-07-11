@@ -5,7 +5,7 @@
 namespace hkr {
 
 class Window;
-class Renderer;
+class RenderEngine;
 
 // default app settings
 struct AppSettings {
@@ -38,12 +38,12 @@ private:
   bool HKR_NO_EXPORT IsMinimized();
 
   Window* mWindow = nullptr;
-  Renderer* mRenderer = nullptr;
+  RenderEngine* mRenderEngine = nullptr;
   bool mIsRunning = false;
   bool mIsResizing = false;
 
   friend class Window;
-  friend class Renderer;
+  friend class RenderEngine;
 };
 
 }  // namespace hkr

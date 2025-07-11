@@ -2,7 +2,7 @@
 #include "Core/Window.h"
 
 #include "hikari/Util/Logger.h"
-#include "Renderer/Renderer.h"
+#include "Renderer/RenderEngine.h"
 
 #include <GLFW/glfw3.h>
 
@@ -12,12 +12,14 @@ void App::Init() {
   Logger::Init();
   mWindow = new Window;
   mWindow->Init(this, 1920, 1080, settings.appName);
-  mRenderer = new Renderer;
-  mRenderer->Init(settings, mWindow->GetWindow());
+  mRenderEngine = new RenderEngine;
+  mRenderEngine->Init(settings, mWindow->GetWindow());
 }
 
 void App::Cleanup() {
-  delete mRenderer;
+  mRenderEngine->Cleanup();
+  delete mRenderEngine;
+  mWindow->Cleanup();
   delete mWindow;
 }
 
@@ -31,7 +33,7 @@ void App::Run() {
     //   continue;
     // }
 
-    mRenderer->Render();
+    mRenderEngine->Render();
   }
 
   // vkDeviceWaitIdle(device);
@@ -42,19 +44,19 @@ bool App::IsMinimized() { return settings.width == 0 || settings.height == 0; }
 void App::OnResize(int width, int height) {
   settings.width = width;
   settings.height = height;
-  mRenderer->Resize(width, height);
+  mRenderEngine->OnResize(width, height);
 }
 
 void App::OnKeyEvent(int key, int action) {
-  mRenderer->OnKeyEvent(key, action);
+  mRenderEngine->OnKeyEvent(key, action);
 }
 
 void App::OnMouseEvent(int button, int action) {
-  mRenderer->OnMouseEvent(button, action);
+  mRenderEngine->OnMouseEvent(button, action);
 }
 
 void App::OnMouseMoveEvent(double x, double y) {
-  mRenderer->OnMouseMoveEvent(x, y);
+  mRenderEngine->OnMouseMoveEvent(x, y);
 }
 
 }  // namespace hkr

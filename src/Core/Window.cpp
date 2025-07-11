@@ -26,8 +26,6 @@ void Window::Cleanup() {
   glfwTerminate();
 }
 
-Window::~Window() { Cleanup(); }
-
 void Window::SetCallback() {
   // resize
   glfwSetFramebufferSizeCallback(

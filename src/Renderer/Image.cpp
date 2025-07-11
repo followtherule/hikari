@@ -1,4 +1,5 @@
 #include "Renderer/Image.h"
+#include <vulkan/vulkan_core.h>
 #include "Util/vk_debug.h"
 
 namespace {
@@ -18,32 +19,32 @@ VkImageAspectFlags GetAspectFlags(VkFormat format) {
 
 namespace hkr {
 
-Image::Image(VkDevice device,
-             VmaAllocator allocator,
-             VmaAllocatorCreateFlags allocFlags,
-             uint32_t width,
-             uint32_t height,
-             uint32_t depth,
-             uint32_t mipLevels,
-             uint32_t arrayLayers,
-             VkFormat format,
-             VkSampleCountFlagBits numSamples,
-             VkImageUsageFlags usage) {
+ImageBase::ImageBase(VkDevice device,
+                     VmaAllocator allocator,
+                     VmaAllocatorCreateFlags allocFlags,
+                     uint32_t width,
+                     uint32_t height,
+                     uint32_t depth,
+                     uint32_t mipLevels,
+                     uint32_t arrayLayers,
+                     VkFormat format,
+                     VkImageUsageFlags usage,
+                     VkSampleCountFlagBits numSamples) {
   Create(device, allocator, allocFlags, width, height, depth, mipLevels,
-         arrayLayers, format, numSamples, usage);
+         arrayLayers, format, usage, numSamples);
 }
 
-void Image::Create(VkDevice device,
-                   VmaAllocator allocator,
-                   VmaAllocatorCreateFlags allocFlags,
-                   uint32_t width,
-                   uint32_t height,
-                   uint32_t depth,
-                   uint32_t mipLevels,
-                   uint32_t arrayLayers,
-                   VkFormat format,
-                   VkSampleCountFlagBits numSamples,
-                   VkImageUsageFlags usage) {
+void ImageBase::Create(VkDevice device,
+                       VmaAllocator allocator,
+                       VmaAllocatorCreateFlags allocFlags,
+                       uint32_t width,
+                       uint32_t height,
+                       uint32_t depth,
+                       uint32_t mipLevels,
+                       uint32_t arrayLayers,
+                       VkFormat format,
+                       VkImageUsageFlags usage,
+                       VkSampleCountFlagBits numSamples) {
   // create image
   VkImageCreateInfo imageInfo{};
   imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -86,95 +87,41 @@ void Image::Create(VkDevice device,
   VK_CHECK(vkCreateImageView(device, &viewInfo, nullptr, &imageView));
 }
 
-void Image::Cleanup(VkDevice device, VmaAllocator allocator) {
+void ImageBase::Cleanup(VkDevice device, VmaAllocator allocator) {
   vkDestroyImageView(device, imageView, nullptr);
   vmaDestroyImage(allocator, image, allocation);
 }
 
-Image2D::Image2D(VkDevice device,
+Image::Image(VkDevice device,
                  VmaAllocator allocator,
-                 VmaAllocatorCreateFlags allocFlags,
                  uint32_t width,
                  uint32_t height,
                  uint32_t mipLevels,
                  VkFormat format,
-                 VkSampleCountFlagBits numSamples,
-                 VkImageUsageFlags usage) {
-  Create(device, allocator, allocFlags, width, height, mipLevels, format,
-         numSamples, usage);
+                 VkImageUsageFlags usage,
+                 VkSampleCountFlagBits numSamples) {
+  Create(device, allocator, width, height, mipLevels, format, usage,
+         numSamples);
 }
 
-void Image2D::Create(VkDevice device,
+void Image::Create(VkDevice device,
                      VmaAllocator allocator,
-                     VmaAllocatorCreateFlags allocFlags,
                      uint32_t width,
                      uint32_t height,
                      uint32_t mipLevels,
                      VkFormat format,
-                     VkSampleCountFlagBits numSamples,
-                     VkImageUsageFlags usage) {
-  Image::Create(device, allocator, allocFlags, width, height, 1, mipLevels, 1,
-                format, numSamples, usage);
-}
-void Image2D::Cleanup(VkDevice device, VmaAllocator allocator) {
-  Image::Cleanup(device, allocator);
+                     VkImageUsageFlags usage,
+                     VkSampleCountFlagBits numSamples) {
+  ImageBase::Create(device, allocator,
+                    VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT, width, height,
+                    1, mipLevels, 1, format, usage, numSamples);
 }
 
-ColorImage2D::ColorImage2D(VkDevice device,
-                           VmaAllocator allocator,
-                           uint32_t width,
-                           uint32_t height,
-                           uint32_t mipLevels,
-                           VkFormat format,
-                           VkSampleCountFlagBits numSamples) {
-  Create(device, allocator, width, height, mipLevels, format, numSamples);
+void Image::Cleanup(VkDevice device, VmaAllocator allocator) {
+  ImageBase::Cleanup(device, allocator);
 }
 
-void ColorImage2D::Create(VkDevice device,
-                          VmaAllocator allocator,
-                          uint32_t width,
-                          uint32_t height,
-                          uint32_t mipLevels,
-                          VkFormat format,
-                          VkSampleCountFlagBits numSamples) {
-  Image2D::Create(
-      device, allocator, VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT, width,
-      height, mipLevels, format, numSamples,
-      // VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT |
-      VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
-}
-
-void ColorImage2D::Cleanup(VkDevice device, VmaAllocator allocator) {
-  Image2D::Cleanup(device, allocator);
-}
-
-DepthImage2D::DepthImage2D(VkDevice device,
-                           VmaAllocator allocator,
-                           uint32_t width,
-                           uint32_t height,
-                           uint32_t mipLevels,
-                           VkFormat format,
-                           VkSampleCountFlagBits numSamples) {
-  Create(device, allocator, width, height, mipLevels, format, numSamples);
-}
-
-void DepthImage2D::Create(VkDevice device,
-                          VmaAllocator allocator,
-                          uint32_t width,
-                          uint32_t height,
-                          uint32_t mipLevels,
-                          VkFormat format,
-                          VkSampleCountFlagBits numSamples) {
-  Image2D::Create(device, allocator, VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT,
-                  width, height, mipLevels, format, numSamples,
-                  VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
-}
-
-void DepthImage2D::Cleanup(VkDevice device, VmaAllocator allocator) {
-  Image2D::Cleanup(device, allocator);
-}
-
-Texture2D::Texture2D(VkDevice device,
+Texture::Texture(VkDevice device,
                      VmaAllocator allocator,
                      uint32_t width,
                      uint32_t height,
@@ -184,21 +131,22 @@ Texture2D::Texture2D(VkDevice device,
   Create(device, allocator, width, height, mipLevels, format, numSamples);
 }
 
-void Texture2D::Create(VkDevice device,
+void Texture::Create(VkDevice device,
                        VmaAllocator allocator,
                        uint32_t width,
                        uint32_t height,
                        uint32_t mipLevels,
                        VkFormat format,
                        VkSampleCountFlagBits numSamples) {
-  Image2D::Create(
-      device, allocator, 0, width, height, mipLevels, format, numSamples,
+  ImageBase::Create(
+      device, allocator, 0, width, height, 1, mipLevels, 1, format,
       VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
-          VK_IMAGE_USAGE_SAMPLED_BIT);
+          VK_IMAGE_USAGE_SAMPLED_BIT,
+      numSamples);
 }
 
-void Texture2D::Cleanup(VkDevice device, VmaAllocator allocator) {
-  Image2D::Cleanup(device, allocator);
+void Texture::Cleanup(VkDevice device, VmaAllocator allocator) {
+  ImageBase::Cleanup(device, allocator);
 }
 
 }  // namespace hkr

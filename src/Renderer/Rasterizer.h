@@ -1,16 +1,15 @@
 #pragma once
 
-#include "Core/Math.h"
-#include "Core/Mouse.h"
-#include "Renderer/Camera.h"
 #include "Renderer/Image.h"
 #include "Renderer/Buffer.h"
-#include "hikari/Core/App.h"
+#include "Renderer/Common.h"
+
+#include "Core/Math.h"
+
+#include <volk.h>
 
 #include <vector>
 #include <string>
-
-class GLFWwindow;
 
 namespace hkr {
 
@@ -56,38 +55,31 @@ struct Vertex {
   }
 };
 
-class Renderer {
+class Rasterizer {
 public:
-  ~Renderer();
-  // init vulkan rendering engine
-  void Init(const AppSettings& settings, GLFWwindow* window);
-
-  void DrawFrame();
-  void Resize(int width, int height);
-
-  void OnKeyEvent(int key, int action);
-  void OnMouseEvent(int button, int action);
-  void OnMouseMoveEvent(double x, double y);
-
-  void Render();
+  void Init(
+      VkDevice device,
+      VkPhysicalDevice physDevice,
+      VkQueue queue,
+      VkCommandPool commandPool,
+      const std::array<UniformBuffer, MAX_FRAMES_IN_FLIGHT>& uniformBuffers,
+      VmaAllocator allocator,
+      VkFormat swapchainImageFormat,
+      int width,
+      int height,
+      const std::string& modelPath,
+      const std::string& texturePath,
+      const std::string& shaderPath);
+  void OnResize(int width, int height);
+  void Cleanup();
+  void RecordCommandBuffer(VkCommandBuffer commandBuffer,
+                           uint32_t currentFrame,
+                           VkImage swapchainImage);
 
 private:
-  // clean up resources
-  void Cleanup();
-
-  // create instance, choose physical device, build logical device, get graphics
-  // queue, setup vma allocator
-  void InitVulkan();
-
-  void CreateSwapchain();
-  void RecreateSwapchain();
-
-  void CreateCommandPool();
-  void CreateCommandBuffers();
-
-  void CreatePipelineCache();
   void CreateDescriptorSetLayout();
   void CreateGraphicsPipeline();
+  void CreatePipelineCache();
 
   void CreateTextureImage();
   void CreateTextureSampler();
@@ -98,10 +90,6 @@ private:
   void CreateDescriptorPool();
   void CreateDescriptorSets();
   void CreateSyncObjects();
-  void InitImGui();
-  void CleanupImGui();
-  void DrawImGui(VkCommandBuffer commandBuffer, uint32_t imageIndex);
-
   // VkSampleCountFlagBits GetMaxUsableSampleCount();
   VkFormat FindSupportedFormat(const std::vector<VkFormat>& candidates,
                                VkImageTiling tiling,
@@ -109,79 +97,46 @@ private:
 
   VkFormat FindDepthFormat();
   VkShaderModule CreateShaderModule(const std::vector<char>& code);
-  void CleanupSwapChain();
   void UpdateUniformBuffer(uint32_t currentImage);
-  void RecordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
-
-  void InitCamera();
 
 private:
-  constexpr static int MAX_FRAMES_IN_FLIGHT = 2;
+  VkDevice mDevice;
+  VkPhysicalDevice mPhysDevice;
+  VkQueue mGraphicsQueue;
+  VmaAllocator mAllocator;
+  VkFormat mSwapchainImageFormat;
+  VkCommandPool mCommandPool;
+  int mWidth = 0;
+  int mHeight = 0;
+
+  // off-screen images for the first renderpass
+  Image mColorImage;
+  Image mDepthImage;
+  bool mRequireStencil = false;
+
+  // VkCommandPool mCommandPool;
+  // std::vector<VkCommandBuffer> mCommandBuffers;
+  //
+  // // descriptor resources
+  std::array<VkBuffer, MAX_FRAMES_IN_FLIGHT> mUniformBuffers;
+
   std::string mModelPath;
   std::string mTexturePath;
   std::string mShaderPath;
-  char* mAppName;
-  GLFWwindow* mWindow;
-  int mWidth = 0;
-  int mHeight = 0;
-  bool mVsync = false;
-
-  VkInstance mInstance;
-  VkDebugUtilsMessengerEXT mDebugMessenger;
-  VkSurfaceKHR mSurface;
-  VkPhysicalDevice mPhysDevice;
-  VkDevice mDevice;
-  VmaAllocator mAllocator;
-
-  VkQueue mGraphicsQueue;
-  uint32_t mGraphicsFamilyIndex;
-
-  VkSwapchainKHR mSwapchain;
-  VkFormat mSwapchainImageFormat;
-  VkFormat mDepthFormat;
-  std::vector<VkImage> mSwapchainImages;
-  std::vector<VkImageView> mSwapchainImageViews;
-  // VkExtent2D mSwapChainExtent;
-
-  // off-screen images for the first renderpass
-  ColorImage2D mColorImage;
-  DepthImage2D mDepthImage;
-  bool mRequireStencil = false;
-
-  VkCommandPool mCommandPool;
-  std::vector<VkCommandBuffer> mCommandBuffers;
-
-  // descriptor resources
-  std::array<UniformBuffer, MAX_FRAMES_IN_FLIGHT> mUniformBuffers;
-
-  Texture2D mTextureImage;
+  Texture mTextureImage;
   VkSampler mTextureSampler;
   std::vector<Vertex> mVertices;
   std::vector<uint32_t> mIndices;
-  VertexBuffer mVertexBuffer;
-  IndexBuffer mIndexBuffer;
+  Buffer mVertexBuffer;
+  Buffer mIndexBuffer;
 
   VkDescriptorSetLayout mDescriptorSetLayout;
   VkDescriptorPool mDescriptorPool;
-  VkDescriptorPool mImGuiDescriptorPool;
   std::vector<VkDescriptorSet> mDescriptorSets;
 
   VkPipelineCache mPipelineCache{VK_NULL_HANDLE};
   VkPipelineLayout mPipelineLayout;
   VkPipeline mGraphicsPipeline;
-
-  // sync primitives
-  std::vector<VkSemaphore> mImageAvailableSemaphores;
-  std::vector<VkSemaphore> mRenderFinishedSemaphores;
-  std::vector<VkFence> mInFlightFences;
-
-  uint32_t mCurrentFrame = 0;
-  bool mFramebufferResized = false;
-
-  Camera mCamera;
-  Mouse mMouse;
-
-  // VkSampleCountFlagBits mMsaaSamples = VK_SAMPLE_COUNT_1_BIT;
 };
 
 }  // namespace hkr

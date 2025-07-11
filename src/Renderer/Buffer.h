@@ -6,19 +6,18 @@
 namespace hkr {
 
 // general buffer (may not be used directly)
-class Buffer {
+class BufferBase {
 public:
-  Buffer() = default;
-  ~Buffer() = default;
-  Buffer(VmaAllocator allocator,
-         VmaAllocationCreateFlags allocFlags,
-         VkDeviceSize size,
-         VkBufferUsageFlags usage);
+  BufferBase() = default;
+  ~BufferBase() = default;
+  BufferBase(VmaAllocator allocator,
+             VmaAllocationCreateFlags allocFlags,
+             VkDeviceSize size,
+             VkBufferUsageFlags2 usage);
   void Create(VmaAllocator allocator,
               VmaAllocationCreateFlags allocFlags,
               VkDeviceSize size,
-              VkBufferUsageFlags usage);
-
+              VkBufferUsageFlags2 usage);
   void Cleanup(VmaAllocator allocator);
 
   VkBuffer buffer;
@@ -26,20 +25,20 @@ public:
 };
 
 // host visible buffer (may not be used directly)
-class MappableBuffer : public Buffer {
+class MappableBuffer : public BufferBase {
 public:
   MappableBuffer() = default;
   ~MappableBuffer() = default;
   MappableBuffer(VmaAllocator allocator,
                  VmaAllocationCreateFlags allocFlags,
                  VkDeviceSize size,
-                 VkBufferUsageFlags usage);
+                 VkBufferUsageFlags2 usage);
   void Create(VmaAllocator allocator,
               VmaAllocationCreateFlags allocFlags,
               VkDeviceSize size,
-              VkBufferUsageFlags usage);
+              VkBufferUsageFlags2 usage);
   void Cleanup(VmaAllocator allocator);
-  void Map(VmaAllocator allocator);
+  void* Map(VmaAllocator allocator);
   void Unmap(VmaAllocator allocator);
   void Write(void* data, size_t size);
 
@@ -66,49 +65,23 @@ public:
   void Cleanup(VmaAllocator allocator);
 };
 
-class VertexBuffer : public Buffer {
+// vertex/index/storage buffer
+class Buffer : public BufferBase {
 public:
-  VertexBuffer() = default;
-  ~VertexBuffer() = default;
-  VertexBuffer(VkDevice device,
-               VmaAllocator allocator,
-               VkQueue queue,
-               VkCommandPool commandPool,
-               void* data,
-               VkDeviceSize size);
+  Buffer() = default;
+  ~Buffer() = default;
+  Buffer(VmaAllocator allocator, VkDeviceSize size, VkBufferUsageFlags2 usage);
+  void Create(VmaAllocator allocator,
+              VkDeviceSize size,
+              VkBufferUsageFlags2 usage);
   void Create(VkDevice device,
               VmaAllocator allocator,
               VkQueue queue,
               VkCommandPool commandPool,
               void* data,
-              VkDeviceSize size);
+              VkDeviceSize size,
+              VkBufferUsageFlags2 usage);
   void Cleanup(VmaAllocator allocator);
 };
-
-class IndexBuffer : public Buffer {
-public:
-  IndexBuffer() = default;
-  ~IndexBuffer() = default;
-  IndexBuffer(VkDevice device,
-              VmaAllocator allocator,
-              VkQueue queue,
-              VkCommandPool commandPool,
-              void* data,
-              VkDeviceSize size);
-  void Create(VkDevice device,
-              VmaAllocator allocator,
-              VkQueue queue,
-              VkCommandPool commandPool,
-              void* data,
-              VkDeviceSize size);
-  void Cleanup(VmaAllocator allocator);
-};
-
-// local buffer in gpu
-// class StorageBuffer : public Buffer {
-// public:
-//   StorageBuffer() = default;
-//   ~StorageBuffer() = default;
-// };
 
 }  // namespace hkr

@@ -9,11 +9,14 @@ add_library(
   Core/tiny_obj_loader.cpp
 
   Renderer/Buffer.cpp
+  Renderer/Descriptor.cpp
   Renderer/Image.cpp
-  Renderer/Renderer.cpp
+  Renderer/Rasterizer.cpp
+  Renderer/RenderEngine.cpp
   Renderer/vk_mem_alloc.cpp
   Renderer/volk_impl.cpp
 
+  Util/Filesystem.cpp
   Util/Logger.cpp
   Util/vk_util.cpp
 
