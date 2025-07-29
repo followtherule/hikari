@@ -12,7 +12,7 @@ struct AppSettings {
   char* appName;
   char* assetPath;
   char* modelRelPath;
-  char* textureRelPath;
+  char* cubemapRelPath;
   int width = 800;
   int height = 600;
   bool vsync = true;
@@ -21,7 +21,7 @@ struct AppSettings {
 class HKR_EXPORT App {
 public:
   ~App();
-  // init the rendering engine
+  // Init the rendering engine
   void Init();
   // rendering loop
   void Run();

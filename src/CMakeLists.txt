@@ -1,18 +1,51 @@
 include(GenerateExportHeader)
 
-add_library(
+# add_library(
+#   hikari
+#   SHARED
+#   Core/App.cpp
+#   Core/Window.cpp
+#
+#   Renderer/Buffer.cpp
+#   Renderer/Cube.cpp
+#   Renderer/Descriptor.cpp
+#   Renderer/Image.cpp
+#   Renderer/Model.cpp
+#   Renderer/Pipeline.cpp
+#   Renderer/Rasterizer.cpp
+#   Renderer/Raytracer.cpp
+#   Renderer/RenderEngine.cpp
+#   Renderer/Skybox.cpp
+#   Renderer/tiny_gltf_impl.cpp
+#   Renderer/vk_mem_alloc.cpp
+#   Renderer/volk_impl.cpp
+#
+#   Util/Filesystem.cpp
+#   Util/Logger.cpp
+#   Util/vk_util.cpp
+#
+#   $<TARGET_OBJECTS:imgui>
+# )
+
+add_library(hikari)
+
+target_sources(
   hikari
-  SHARED
+  PRIVATE
   Core/App.cpp
   Core/Window.cpp
-  Core/stb_image.cpp
-  Core/tiny_obj_loader.cpp
 
   Renderer/Buffer.cpp
+  Renderer/Cube.cpp
   Renderer/Descriptor.cpp
   Renderer/Image.cpp
+  Renderer/Model.cpp
+  Renderer/Pipeline.cpp
   Renderer/Rasterizer.cpp
+  Renderer/Raytracer.cpp
   Renderer/RenderEngine.cpp
+  Renderer/Skybox.cpp
+  Renderer/tiny_gltf_impl.cpp
   Renderer/vk_mem_alloc.cpp
   Renderer/volk_impl.cpp
 
@@ -21,6 +54,54 @@ add_library(
   Util/vk_util.cpp
 
   $<TARGET_OBJECTS:imgui>
+)
+
+target_sources(
+  hikari
+  PRIVATE
+  FILE_SET private_headers TYPE HEADERS
+  FILES
+  Core/Math.h
+  Core/Mouse.h
+  Core/Window.h
+
+  Renderer/Buffer.h
+  Renderer/Camera.h
+  Renderer/Common.h
+  Renderer/Cube.h
+  Renderer/Descriptor.h
+  Renderer/Image.h
+  Renderer/Model.h
+  Renderer/Pipeline.h
+  Renderer/Rasterizer.h
+  Renderer/Raytracer.h
+  Renderer/RenderEngine.h
+  Renderer/Skybox.h
+
+  Util/Assert.h
+  Util/Filesystem.h
+  Util/vk_debug.h
+  Util/vk_util.h
+)
+
+generate_export_header(
+  hikari
+  BASE_NAME hkr
+  EXPORT_FILE_NAME ${PROJECT_BINARY_DIR}/include/hikari/hikari_export.hpp
+)
+
+target_sources(
+  hikari
+  PUBLIC
+  FILE_SET public_headers TYPE HEADERS
+  BASE_DIRS ${PROJECT_SOURCE_DIR}/include ${PROJECT_BINARY_DIR}/include
+  FILES
+  ${PROJECT_SOURCE_DIR}/include/hikari/Core/App.h
+  ${PROJECT_SOURCE_DIR}/include/hikari/Core/EntryPoint.h
+
+  ${PROJECT_SOURCE_DIR}/include/hikari/Util/Logger.h
+
+  ${PROJECT_BINARY_DIR}/include/hikari/hikari_export.hpp
 )
 
 add_library(${PROJECT_NAME}::hikari ALIAS hikari)
@@ -34,38 +115,20 @@ target_link_libraries(
   imgui
 )
 
-# Vulkan SDK version: 1.4.304.1
-# find_package(Vulkan REQUIRED)
-
 target_link_system_libraries(
   hikari
   PRIVATE
-  # Vulkan::Vulkan
   glfw
   glm::glm
   vk-bootstrap::vk-bootstrap
   GPUOpen::VulkanMemoryAllocator
-
-  # ktx
-  # tinygltf
+  ktx
+  tinygltf
 
   PUBLIC
   spdlog::spdlog
 
   # CLI11::CLI11
-)
-
-target_include_directories(
-  hikari
-  ${WARNING_GUARD}
-  PRIVATE
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
-
-  PUBLIC
-  $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
-
-  # for export header
-  $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/include>
 )
 
 target_compile_features(hikari PUBLIC cxx_std_20)
@@ -77,12 +140,8 @@ set_target_properties(
   VISIBILITY_INLINES_HIDDEN YES
 )
 
-generate_export_header(hikari
-BASE_NAME hkr
-EXPORT_FILE_NAME ${PROJECT_BINARY_DIR}/include/hikari/hikari_export.hpp)
-
 # choose WSI for linux box
-set(WSI_SELECT XCB CACHE STRING "Choose the WSI.")
+set(WSI_SELECT XCB CACHE STRING "Choose the WSI: XCB XLIB WAYLAND.")
 set_property(
   CACHE WSI_SELECT
   PROPERTY STRINGS
@@ -122,10 +181,9 @@ if(NOT BUILD_SHARED_LIBS)
   target_compile_definitions(hikari PUBLIC HIKARI_STATIC_DEFINE)
 endif()
 
-# compile shaders
 find_program(
-  GLSL_VALIDATOR glslangValidator
-  HINTS /usr/bin /usr/local/bin $ENV{VULKAN_SDK}/Bin/ $ENV{VULKAN_SDK}/Bin32/
+  GLSLC glslc
+  HINTS /usr/bin /usr/local/bin $ENV{VULKAN_SDK}/Bin/ $ENV{VULKAN_SDK}/bin/ $ENV{VULKAN_SDK}/Bin32/
 )
 
 file(GLOB_RECURSE GLSL_SOURCE_FILES
@@ -135,17 +193,19 @@ file(GLOB_RECURSE GLSL_SOURCE_FILES
     "shaders/*.rgen"
     "shaders/*.rmiss"
     "shaders/*.rchit"
+    "shaders/*.rahit"
 )
 
+set(GLSL_ARGS --target-spv=spv1.5)
 foreach(GLSL ${GLSL_SOURCE_FILES})
   message(STATUS "BUILDING SHADER")
   get_filename_component(FILE_NAME ${GLSL} NAME)
   set(SPIRV "${PROJECT_SOURCE_DIR}/assets/spirv/${FILE_NAME}.spv")
   message(STATUS ${GLSL})
-  message(STATUS COMMAND ${GLSL_VALIDATOR} -V ${GLSL} -o ${SPIRV})
+  message(STATUS COMMAND ${GLSLC} ${GLSL} -o ${SPIRV} ${GLSL_ARGS})
   add_custom_command(
     OUTPUT ${SPIRV}
-    COMMAND ${GLSL_VALIDATOR} -V ${GLSL} -o ${SPIRV}
+    COMMAND ${GLSLC} ${GLSL} -o ${SPIRV} ${GLSL_ARGS}
     DEPENDS ${GLSL})
   list(APPEND SPIRV_BINARY_FILES ${SPIRV})
 endforeach(GLSL)

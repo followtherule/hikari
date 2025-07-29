@@ -29,14 +29,8 @@ void App::Run() {
   while (!glfwWindowShouldClose(mWindow->GetWindow())) {
     glfwPollEvents();
 
-    // if (IsMinimized()) {
-    //   continue;
-    // }
-
     mRenderEngine->Render();
   }
-
-  // vkDeviceWaitIdle(device);
 }
 
 bool App::IsMinimized() { return settings.width == 0 || settings.height == 0; }

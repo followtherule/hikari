@@ -1,7 +1,5 @@
 #pragma once
 
-#include <string>
-
 // forward declare
 namespace hkr {
 class App;

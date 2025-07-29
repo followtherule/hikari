@@ -2,9 +2,9 @@
 
 #include <volk.h>
 #include <vk_mem_alloc.h>
-#include <vulkan/vulkan_core.h>
 
 #include <cstdint>
+#include <string>
 
 namespace hkr {
 
@@ -23,7 +23,9 @@ public:
             uint32_t arrayLayers,
             VkFormat format,
             VkImageUsageFlags usage,
-            VkSampleCountFlagBits numSamples);
+            VkSampleCountFlagBits numSamples,
+            VkImageCreateFlags flags = 0,
+            VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D);
   void Create(VkDevice device,
               VmaAllocator allocator,
               VmaAllocatorCreateFlags allocFlags,
@@ -34,7 +36,9 @@ public:
               uint32_t arrayLayers,
               VkFormat format,
               VkImageUsageFlags usage,
-              VkSampleCountFlagBits numSamples);
+              VkSampleCountFlagBits numSamples,
+              VkImageCreateFlags flags = 0,
+              VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D);
   void Cleanup(VkDevice device, VmaAllocator allocator);
 
   VkImage image;
@@ -85,7 +89,66 @@ public:
               uint32_t mipLevels,
               VkFormat format,
               VkSampleCountFlagBits numSamples = VK_SAMPLE_COUNT_1_BIT);
+  // create image and load data from file
+  // TODO: may split out the staging part
+  void Load(VkDevice device,
+            VmaAllocator allocator,
+            VkQueue queue,
+            VkCommandPool commandPool,
+            const std::string& fileName);
   void Cleanup(VkDevice device, VmaAllocator allocator);
+};
+
+// arrayLayers = 6
+class Cubemap : public ImageBase {
+public:
+  Cubemap() = default;
+  ~Cubemap() = default;
+  Cubemap(VkDevice device,
+          VmaAllocator allocator,
+          uint32_t width,
+          uint32_t height,
+          uint32_t mipLevels,
+          VkFormat format,
+          VkSampleCountFlagBits numSamples = VK_SAMPLE_COUNT_1_BIT);
+  void Create(VkDevice device,
+              VmaAllocator allocator,
+              uint32_t width,
+              uint32_t height,
+              uint32_t mipLevels,
+              VkFormat format,
+              VkSampleCountFlagBits numSamples = VK_SAMPLE_COUNT_1_BIT);
+  // create image and load data from file
+  // TODO: may split out the staging part
+  void Load(VkDevice device,
+            VmaAllocator allocator,
+            VkQueue queue,
+            VkCommandPool commandPool,
+            const std::string& fileName);
+  void Cleanup(VkDevice device, VmaAllocator allocator);
+};
+
+// texture sampler
+class SamplerBuilder {
+public:
+  SamplerBuilder();
+  VkSampler Build(VkDevice device);
+  SamplerBuilder& SetCreateFlags(VkSamplerCreateFlags flags);
+  SamplerBuilder& SetMagFilter(VkFilter magFilter);
+  SamplerBuilder& SetMinFilter(VkFilter minFilter);
+  SamplerBuilder& SetMipmapMode(VkSamplerMipmapMode mipmapMode);
+  SamplerBuilder& SetAddressModeU(VkSamplerAddressMode addressMode);
+  SamplerBuilder& SetAddressModeV(VkSamplerAddressMode addressMode);
+  SamplerBuilder& SetAddressModeW(VkSamplerAddressMode addressMode);
+  SamplerBuilder& SetMipLodBias(float mipLodBias);
+  SamplerBuilder& SetMaxAnisotropy(float maxAnisotropy);
+  SamplerBuilder& SetCompareOp(VkCompareOp compareOp);
+  SamplerBuilder& SetMinLod(float minLod);
+  SamplerBuilder& SetMaxLod(float maxLod);
+  SamplerBuilder& SetBorderColor(VkBorderColor borderColor);
+
+private:
+  VkSamplerCreateInfo mSamplerInfo{};
 };
 
 }  // namespace hkr

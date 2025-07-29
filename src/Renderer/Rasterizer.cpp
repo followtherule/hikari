@@ -1,27 +1,16 @@
 #include "Renderer/Rasterizer.h"
+#include "Renderer/Buffer.h"
 #include "Renderer/Descriptor.h"
+#include "Renderer/Model.h"
+#include "Renderer/Common.h"
+#include "Renderer/Pipeline.h"
+#include "Renderer/Skybox.h"
 #include "Util/Assert.h"
 #include "Util/vk_util.h"
 #include "Util/vk_debug.h"
-#include "Core/tiny_obj_loader.h"
-#include "Core/stb_image.h"
-#include "Renderer/Common.h"
-#include "Util/Filesystem.h"
 
-#include <unordered_map>
-
-namespace std {
-
-template <> struct hash<hkr::Vertex> {
-  size_t operator()(hkr::Vertex const& vertex) const {
-    return ((hash<hkr::Vec3>()(vertex.pos) ^
-             (hash<hkr::Vec3>()(vertex.color) << 1)) >>
-            1) ^
-           (hash<hkr::Vec2>()(vertex.texCoord) << 1);
-  }
-};
-
-}  // namespace std
+#include <cstddef>
+#include <cstdint>
 
 namespace hkr {
 
@@ -35,14 +24,16 @@ void Rasterizer::Init(
     VkFormat swapchainImageFormat,
     int width,
     int height,
-    const std::string& modelPath,
-    const std::string& texturePath,
-    const std::string& shaderPath) {
+    glTFModel* model,
+    Skybox* skybox,
+    const std::string& assetPath) {
   // setup rendering context
   mDevice = device;
   mPhysDevice = physDevice;
   mGraphicsQueue = queue;
   mCommandPool = commandPool;
+  mModel = model;
+  mSkybox = skybox;
   for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
     mUniformBuffers[i] = uniformBuffers[i].buffer;
   }
@@ -50,157 +41,121 @@ void Rasterizer::Init(
   mSwapchainImageFormat = swapchainImageFormat;
   mWidth = width;
   mHeight = height;
-  mModelPath = modelPath;
-  mTexturePath = texturePath;
-  mShaderPath = shaderPath;
+  mAssetPath = assetPath;
 
+  CreateAttachmentImage();
+
+  CreateDescriptorPool();
+  CreateDescriptorSetLayout();
+  CreateDescriptorSets();
+
+  CreatePipelineLayout();
+  CreatePipeline();
+}
+
+void Rasterizer::CreateAttachmentImage() {
   // create off-screen color, depth images
   mColorImage.Create(
-      mDevice, mAllocator, mWidth, mHeight, 1, mSwapchainImageFormat,
+      mDevice, mAllocator, mWidth, mHeight, 1, VK_FORMAT_R8G8B8A8_UNORM,
       VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
   mDepthImage.Create(mDevice, mAllocator, mWidth, mHeight, 1, FindDepthFormat(),
                      VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
-
-  // descriptors resources
-  CreateTextureImage();
-  CreateTextureSampler();
-  LoadModel();
-  CreateVertexBuffer();
-  CreateIndexBuffer();
-  CreateDescriptorSetLayout();
-  CreateDescriptorPool();
-  CreateDescriptorSets();
-
-  CreateGraphicsPipeline();
-}
-
-void Rasterizer::CreateTextureImage() {
-  int texWidth, texHeight, texChannels;
-  stbi_uc* pixels = stbi_load(mTexturePath.c_str(), &texWidth, &texHeight,
-                              &texChannels, STBI_rgb_alpha);
-  VkDeviceSize imageSize = texWidth * texHeight * 4;
-  uint32_t mipLevels = static_cast<uint32_t>(std::floor(
-                           std::log2(std::max(texWidth, texHeight)))) +
-                       1;
-
-  HKR_ASSERT(pixels);
-
-  StagingBuffer buffer;
-  buffer.Create(mAllocator, imageSize);
-  buffer.Map(mAllocator);
-  buffer.Write(pixels, static_cast<size_t>(imageSize));
-  buffer.Unmap(mAllocator);
-
-  stbi_image_free(pixels);
-
-  mTextureImage.Create(mDevice, mAllocator, texWidth, texHeight, mipLevels,
-                       VK_FORMAT_R8G8B8A8_SRGB);
-
-  VkCommandBuffer commandBuffer = BeginOneTimeCommands(mDevice, mCommandPool);
-  TransitImageLayout(commandBuffer, mTextureImage.image,
-                     VK_IMAGE_LAYOUT_UNDEFINED,
-                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, mipLevels);
-  CopyBufferToImage(commandBuffer, buffer.buffer, mTextureImage.image,
-                    static_cast<uint32_t>(texWidth),
-                    static_cast<uint32_t>(texHeight));
-  GenerateMipmaps(commandBuffer, mTextureImage.image, texWidth, texHeight,
-                  mipLevels);
-  EndOneTimeCommands(mDevice, mGraphicsQueue, mCommandPool, commandBuffer);
-
-  buffer.Cleanup(mAllocator);
-
-  // transitioned to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL while
-  // generating mipmaps
-}
-
-void Rasterizer::CreateTextureSampler() {
-  VkPhysicalDeviceProperties properties{};
-  vkGetPhysicalDeviceProperties(mPhysDevice, &properties);
-
-  VkSamplerCreateInfo samplerInfo{};
-  samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-  samplerInfo.magFilter = VK_FILTER_LINEAR;
-  samplerInfo.minFilter = VK_FILTER_LINEAR;
-  samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-  samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-  samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-  samplerInfo.anisotropyEnable = VK_TRUE;
-  samplerInfo.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
-  samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
-  samplerInfo.unnormalizedCoordinates = VK_FALSE;
-  samplerInfo.compareEnable = VK_FALSE;
-  samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
-  samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-  samplerInfo.minLod = 0.0f;
-  samplerInfo.maxLod = VK_LOD_CLAMP_NONE;
-  samplerInfo.mipLodBias = 0.0f;
-
-  VK_CHECK(vkCreateSampler(mDevice, &samplerInfo, nullptr, &mTextureSampler));
 }
 
 void Rasterizer::CreateDescriptorPool() {
+  const uint32_t imageCount = mModel->textures.size();
   std::array<VkDescriptorPoolSize, 2> poolSizes{};
   poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
   poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
   poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  poolSizes[1].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+  poolSizes[1].descriptorCount =
+      static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT) * imageCount;
 
   VkDescriptorPoolCreateInfo poolInfo{};
   poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
   poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
   poolInfo.pPoolSizes = poolSizes.data();
-  poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+  poolInfo.maxSets =
+      static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT) * (imageCount + 1);
 
   VK_CHECK(
       vkCreateDescriptorPool(mDevice, &poolInfo, nullptr, &mDescriptorPool));
 }
 
+void Rasterizer::CreateDescriptorSetLayout() {
+  // one descriptor set for uniform buffer
+  {
+    DescriptorSetLayoutBuilder builder(1);
+    builder.AddBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                       VK_SHADER_STAGE_VERTEX_BIT);
+    mUboDescriptorSetLayout = builder.Build(mDevice);
+  }
+
+  // one descriptor set for model's texture
+  {
+    DescriptorSetLayoutBuilder builder(1);
+    builder.AddBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                       VK_SHADER_STAGE_FRAGMENT_BIT);
+    mImageDescriptorSetLayout = builder.Build(mDevice);
+  }
+
+  // DescriptorSetLayoutBuilder builder(2);
+  // builder.AddBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+  //                    VK_SHADER_STAGE_VERTEX_BIT);
+  // builder.AddBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+  //                    VK_SHADER_STAGE_FRAGMENT_BIT);
+  // mDescriptorSetLayout = builder.Build(mDevice);
+}
+
 void Rasterizer::CreateDescriptorSets() {
-  std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT,
-                                             mDescriptorSetLayout);
+  // ubo descriptor set
+  std::vector<VkDescriptorSetLayout> uboSetLayouts(MAX_FRAMES_IN_FLIGHT,
+                                                   mUboDescriptorSetLayout);
   VkDescriptorSetAllocateInfo allocInfo{};
   allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
   allocInfo.descriptorPool = mDescriptorPool;
   allocInfo.descriptorSetCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
-  allocInfo.pSetLayouts = layouts.data();
-
-  mDescriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
-
+  allocInfo.pSetLayouts = uboSetLayouts.data();
+  mUboDescriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
   VK_CHECK(
-      vkAllocateDescriptorSets(mDevice, &allocInfo, mDescriptorSets.data()));
+      vkAllocateDescriptorSets(mDevice, &allocInfo, mUboDescriptorSets.data()));
+
+  // image descriptor set
+  const size_t imageCount = mModel->textures.size();
+  std::vector<VkDescriptorSetLayout> imageSetLayouts(imageCount,
+                                                     mImageDescriptorSetLayout);
+  allocInfo.descriptorSetCount = static_cast<uint32_t>(imageCount);
+  allocInfo.pSetLayouts = imageSetLayouts.data();
+  mImageDescriptorSets.resize(MAX_FRAMES_IN_FLIGHT,
+                              std::vector<VkDescriptorSet>(imageCount));
+  for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+    VK_CHECK(vkAllocateDescriptorSets(mDevice, &allocInfo,
+                                      mImageDescriptorSets[i].data()));
+  }
 
   for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+    DescriptorSetWriter writer(1);
     VkDescriptorBufferInfo bufferInfo{};
     bufferInfo.buffer = mUniformBuffers[i];
     bufferInfo.offset = 0;
     bufferInfo.range = sizeof(UniformBufferObject);
+    writer.Write(mUboDescriptorSets[i], 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
+                 &bufferInfo);
+    writer.Update(mDevice);
 
-    VkDescriptorImageInfo imageInfo{};
-    imageInfo.sampler = mTextureSampler;
-    imageInfo.imageView = mTextureImage.imageView;
-    imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    for (size_t j = 0; j < imageCount; j++) {
+      DescriptorSetWriter writer(1);
+      const auto& texture = mModel->textures[j];
+      VkDescriptorImageInfo imageInfo{};
+      imageInfo.sampler = mModel->samplers[texture.samplerIndex].sampler;
+      imageInfo.imageView = mModel->images[texture.imageIndex].image.imageView;
+      // imageInfo.imageView = mModel->images.back().image.imageView;
+      imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-    std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
-    descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    descriptorWrites[0].dstSet = mDescriptorSets[i];
-    descriptorWrites[0].dstBinding = 0;
-    descriptorWrites[0].dstArrayElement = 0;
-    descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    descriptorWrites[0].descriptorCount = 1;
-    descriptorWrites[0].pBufferInfo = &bufferInfo;
-
-    descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    descriptorWrites[1].dstSet = mDescriptorSets[i];
-    descriptorWrites[1].dstBinding = 1;
-    descriptorWrites[1].dstArrayElement = 0;
-    descriptorWrites[1].descriptorType =
-        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    descriptorWrites[1].descriptorCount = 1;
-    descriptorWrites[1].pImageInfo = &imageInfo;
-
-    vkUpdateDescriptorSets(mDevice,
-                           static_cast<uint32_t>(descriptorWrites.size()),
-                           descriptorWrites.data(), 0, nullptr);
+      writer.Write(mImageDescriptorSets[i][j], 0,
+                   VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, &imageInfo);
+      writer.Update(mDevice);
+    }
   }
 }
 
@@ -211,220 +166,110 @@ void Rasterizer::CreatePipelineCache() {
                                  &mPipelineCache));
 }
 
-VkShaderModule Rasterizer::CreateShaderModule(const std::vector<char>& code) {
-  VkShaderModuleCreateInfo createInfo{};
-  createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-  createInfo.codeSize = code.size();
-  createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
-
-  VkShaderModule shaderModule;
-  VK_CHECK(vkCreateShaderModule(mDevice, &createInfo, nullptr, &shaderModule));
-
-  return shaderModule;
-}
-
-void Rasterizer::CreateGraphicsPipeline() {
-  auto vertShaderCode = ReadFile(mShaderPath + "shader.vert.spv");
-  auto fragShaderCode = ReadFile(mShaderPath + "shader.frag.spv");
-
-  VkShaderModule vertShaderModule = CreateShaderModule(vertShaderCode);
-  VkShaderModule fragShaderModule = CreateShaderModule(fragShaderCode);
-
-  VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
-  vertShaderStageInfo.sType =
-      VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-  vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
-  vertShaderStageInfo.module = vertShaderModule;
-  vertShaderStageInfo.pName = "main";
-
-  VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
-  fragShaderStageInfo.sType =
-      VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-  fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-  fragShaderStageInfo.module = fragShaderModule;
-  fragShaderStageInfo.pName = "main";
-
-  std::array<VkPipelineShaderStageCreateInfo, 2> shaderStages = {
-      vertShaderStageInfo, fragShaderStageInfo};
-
-  auto bindingDescription = Vertex::getBindingDescription();
-  auto attributeDescriptions = Vertex::getAttributeDescriptions();
-
-  VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
-  vertexInputInfo.sType =
-      VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-  vertexInputInfo.vertexBindingDescriptionCount = 1;
-  vertexInputInfo.vertexAttributeDescriptionCount =
-      static_cast<uint32_t>(attributeDescriptions.size());
-  vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
-  vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
-
-  VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
-  inputAssembly.sType =
-      VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-  inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-  inputAssembly.primitiveRestartEnable = VK_FALSE;
-
-  VkPipelineViewportStateCreateInfo viewportState{};
-  viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-  viewportState.viewportCount = 1;
-  viewportState.scissorCount = 1;
-
-  VkPipelineRasterizationStateCreateInfo rasterizer{};
-  rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-  rasterizer.depthClampEnable = VK_FALSE;
-  rasterizer.rasterizerDiscardEnable = VK_FALSE;
-  rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
-  rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-  rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-  rasterizer.lineWidth = 1.0f;
-  rasterizer.depthBiasEnable = VK_FALSE;
-
-  VkPipelineMultisampleStateCreateInfo multisampling{};
-  multisampling.sType =
-      VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-  multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-  multisampling.sampleShadingEnable = VK_FALSE;
-  // multisampling.minSampleShading = .2f;
-  // multisampling.rasterizationSamples = mMsaaSamples;
-
-  VkPipelineDepthStencilStateCreateInfo depthStencil{};
-  depthStencil.sType =
-      VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-  depthStencil.depthTestEnable = VK_TRUE;
-  depthStencil.depthWriteEnable = VK_TRUE,
-  depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
-  depthStencil.depthBoundsTestEnable = VK_FALSE;
-  depthStencil.stencilTestEnable = VK_FALSE;
-  depthStencil.front = depthStencil.back,
-  depthStencil.back.failOp = VK_STENCIL_OP_KEEP;
-  depthStencil.back.passOp = VK_STENCIL_OP_KEEP;
-  depthStencil.back.compareOp = VK_COMPARE_OP_ALWAYS;
-
-  VkPipelineColorBlendAttachmentState colorBlendAttachment{};
-  colorBlendAttachment.blendEnable = VK_FALSE;
-  colorBlendAttachment.colorWriteMask =
-      VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-      VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-
-  VkPipelineColorBlendStateCreateInfo colorBlending{};
-  colorBlending.sType =
-      VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-  colorBlending.logicOpEnable = VK_FALSE;
-  colorBlending.logicOp = VK_LOGIC_OP_COPY;
-  colorBlending.attachmentCount = 1;
-  colorBlending.pAttachments = &colorBlendAttachment;
-  colorBlending.blendConstants[0] = 0.0f;
-  colorBlending.blendConstants[1] = 0.0f;
-  colorBlending.blendConstants[2] = 0.0f;
-  colorBlending.blendConstants[3] = 0.0f;
-
-  std::array<VkDynamicState, 2> dynamicStates = {VK_DYNAMIC_STATE_VIEWPORT,
-                                                 VK_DYNAMIC_STATE_SCISSOR};
-  VkPipelineDynamicStateCreateInfo dynamicState{};
-  dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-  dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
-  dynamicState.pDynamicStates = dynamicStates.data();
-
+void Rasterizer::CreatePipelineLayout() {
+  VkPushConstantRange pushConstant{};
+  pushConstant.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+  pushConstant.offset = 0;
+  pushConstant.size = sizeof(Mat4);
+  std::array<VkDescriptorSetLayout, 2> setLayouts{mUboDescriptorSetLayout,
+                                                  mImageDescriptorSetLayout};
   VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
   pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-  pipelineLayoutInfo.setLayoutCount = 1;
-  pipelineLayoutInfo.pSetLayouts = &mDescriptorSetLayout;
-
+  pipelineLayoutInfo.setLayoutCount = setLayouts.size();
+  pipelineLayoutInfo.pSetLayouts = setLayouts.data();
+  pipelineLayoutInfo.pushConstantRangeCount = 1;
+  pipelineLayoutInfo.pPushConstantRanges = &pushConstant;
   VK_CHECK(vkCreatePipelineLayout(mDevice, &pipelineLayoutInfo, nullptr,
                                   &mPipelineLayout));
+}
 
-  VkPipelineRenderingCreateInfoKHR pipelineRenderingCI{};
-  pipelineRenderingCI.sType =
-      VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
-  pipelineRenderingCI.colorAttachmentCount = 1;
-  pipelineRenderingCI.pColorAttachmentFormats = &mSwapchainImageFormat;
-  pipelineRenderingCI.depthAttachmentFormat = FindDepthFormat();
-  if (mRequireStencil) {
-    pipelineRenderingCI.stencilAttachmentFormat = FindDepthFormat();
-  }
+void Rasterizer::CreatePipeline() {
+  GraphicsPipelineBuilder builder;
 
-  VkGraphicsPipelineCreateInfo pipelineInfo{};
-  pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-  pipelineInfo.pNext = &pipelineRenderingCI;
-  pipelineInfo.stageCount = 2;
-  pipelineInfo.pStages = shaderStages.data();
-  pipelineInfo.pVertexInputState = &vertexInputInfo;
-  pipelineInfo.pInputAssemblyState = &inputAssembly;
-  pipelineInfo.pViewportState = &viewportState;
-  pipelineInfo.pRasterizationState = &rasterizer;
-  pipelineInfo.pMultisampleState = &multisampling;
-  pipelineInfo.pDepthStencilState = &depthStencil;
-  pipelineInfo.pColorBlendState = &colorBlending;
-  pipelineInfo.pDynamicState = &dynamicState;
-  pipelineInfo.layout = mPipelineLayout;
-  pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
-  // .renderPass = mRenderPass,
-  // .subpass = 0,
+  // ShaderStage
+  VkShaderModule vertShaderModule =
+      LoadShaderModule(mDevice, mAssetPath + "spirv/shader.vert.spv");
+  VkShaderModule fragShaderModule =
+      LoadShaderModule(mDevice, mAssetPath + "spirv/shader.frag.spv");
+  builder.ShaderStage({{VK_SHADER_STAGE_VERTEX_BIT, vertShaderModule},
+                       {VK_SHADER_STAGE_FRAGMENT_BIT, fragShaderModule}});
+  // VertexInput
+  builder.VertexInput(
+      sizeof(glTFVertex),
+      {{VK_FORMAT_R32G32B32_SFLOAT, offsetof(glTFVertex, position)},
+       {VK_FORMAT_R32G32B32_SFLOAT, offsetof(glTFVertex, normal)},
+       {VK_FORMAT_R32G32_SFLOAT, offsetof(glTFVertex, uv)},
+       {VK_FORMAT_R32G32B32_SFLOAT, offsetof(glTFVertex, color)}});
 
-  VK_CHECK(vkCreateGraphicsPipelines(mDevice, VK_NULL_HANDLE, 1, &pipelineInfo,
-                                     nullptr, &mGraphicsPipeline));
+  //  InputAssembly
+  builder.InputAssembly(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+
+  // Viewport
+  builder.Viewport();
+
+  // Rasterization
+  builder.Rasterization(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE,
+                        VK_POLYGON_MODE_FILL);
+
+  // Multisample
+  builder.Multisample();
+
+  // DepthStencil
+  builder.DepthStencil(VK_TRUE, VK_TRUE, VK_COMPARE_OP_LESS);
+
+  // ColorBlend
+  builder.ColorBlend();
+
+  // DynamicState
+  builder.DynamicState();
+
+  // Dynamic Rendering
+  VkFormat colorFormat = VK_FORMAT_R8G8B8A8_UNORM;
+  builder.Rendering(1, &colorFormat, FindDepthFormat());
+
+  // Build pipeline
+  mGraphicsPipeline = builder.Build(mDevice, mPipelineLayout);
 
   vkDestroyShaderModule(mDevice, fragShaderModule, nullptr);
   vkDestroyShaderModule(mDevice, vertShaderModule, nullptr);
 }
 
-void Rasterizer::LoadModel() {
-  tinyobj::attrib_t attrib;
-  std::vector<tinyobj::shape_t> shapes;
-  std::vector<tinyobj::material_t> materials;
-  std::string warn, err;
-
-  bool result = tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err,
-                                 mModelPath.c_str());
-  HKR_ASSERT(result);
-
-  std::unordered_map<Vertex, uint32_t> uniqueVertices{};
-
-  for (const auto& shape : shapes) {
-    for (const auto& index : shape.mesh.indices) {
-      Vertex vertex{};
-
-      vertex.pos = {attrib.vertices[3 * index.vertex_index + 0],
-                    attrib.vertices[3 * index.vertex_index + 1],
-                    attrib.vertices[3 * index.vertex_index + 2]};
-
-      vertex.texCoord = {attrib.texcoords[2 * index.texcoord_index + 0],
-                         1.0f - attrib.texcoords[2 * index.texcoord_index + 1]};
-
-      vertex.color = {1.0f, 1.0f, 1.0f};
-
-      if (uniqueVertices.count(vertex) == 0) {
-        uniqueVertices[vertex] = static_cast<uint32_t>(mVertices.size());
-        mVertices.push_back(vertex);
+void Rasterizer::DrawNode(VkCommandBuffer commandBuffer,
+                          uint32_t currentFrame,
+                          const glTFNode& node) {
+  if (node.meshIndex != -1 &&
+      mModel->meshes[node.meshIndex].primitives.size() > 0) {
+    vkCmdPushConstants(commandBuffer, mPipelineLayout,
+                       VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(Mat4),
+                       &node.uniformData.globalTransform);
+    for (const auto& primitive : mModel->meshes[node.meshIndex].primitives) {
+      if (primitive.indexCount > 0) {
+        const auto& material = mModel->materials[primitive.materialIndex];
+        VkDescriptorSet imageDescriptorSet =
+            mImageDescriptorSets[currentFrame][material.baseColorTextureIndex];
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                mPipelineLayout, 1, 1, &imageDescriptorSet, 0,
+                                nullptr);
+        vkCmdDrawIndexed(commandBuffer, primitive.indexCount, 1,
+                         primitive.firstIndex, 0, 0);
       }
-
-      mIndices.push_back(uniqueVertices[vertex]);
     }
+  }
+  for (const auto& childIndex : node.childIndices) {
+    DrawNode(commandBuffer, currentFrame, mModel->nodes[childIndex]);
   }
 }
 
-void Rasterizer::CreateVertexBuffer() {
-  VkDeviceSize bufferSize = sizeof(mVertices[0]) * mVertices.size();
-  mVertexBuffer.Create(mDevice, mAllocator, mGraphicsQueue, mCommandPool,
-                       mVertices.data(), bufferSize,
-                       VK_BUFFER_USAGE_2_VERTEX_BUFFER_BIT);
-}
-
-void Rasterizer::CreateIndexBuffer() {
-  VkDeviceSize bufferSize = sizeof(mIndices[0]) * mIndices.size();
-  mIndexBuffer.Create(mDevice, mAllocator, mGraphicsQueue, mCommandPool,
-                      mIndices.data(), bufferSize,
-                      VK_BUFFER_USAGE_2_INDEX_BUFFER_BIT);
-}
-
-void Rasterizer::CreateDescriptorSetLayout() {
-  DescriptorSetLayoutBuilder<2> builder;
-  builder.AddBinding(1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-                     VK_SHADER_STAGE_VERTEX_BIT);
-  builder.AddBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                     VK_SHADER_STAGE_FRAGMENT_BIT);
-  mDescriptorSetLayout = builder.Build(mDevice);
+void Rasterizer::Draw(VkCommandBuffer commandBuffer, uint32_t currentFrame) {
+  VkDeviceSize offsets[1] = {0};
+  vkCmdBindVertexBuffers(commandBuffer, 0, 1, &mModel->vertices.buffer,
+                         offsets);
+  vkCmdBindIndexBuffer(commandBuffer, mModel->indices.buffer, 0,
+                       VK_INDEX_TYPE_UINT32);
+  for (uint32_t nodeIndex : mModel->topLevelNodeIndices) {
+    const auto& node = mModel->nodes[nodeIndex];
+    DrawNode(commandBuffer, currentFrame, node);
+  }
 }
 
 void Rasterizer::RecordCommandBuffer(VkCommandBuffer commandBuffer,
@@ -456,7 +301,6 @@ void Rasterizer::RecordCommandBuffer(VkCommandBuffer commandBuffer,
   VkRenderingAttachmentInfo colorAttachment{
       VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
   colorAttachment.imageView = mColorImage.imageView;
-  // colorAttachment.imageView = mSwapchainImageViews[imageIndex];
   colorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
   colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
   colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -485,10 +329,6 @@ void Rasterizer::RecordCommandBuffer(VkCommandBuffer commandBuffer,
     renderingInfo.pStencilAttachment = nullptr;
   }
 
-  // std::array<VkClearValue, 2> clearValues{};
-  // clearValues[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
-  // clearValues[1].depthStencil = {1.0f, 0};
-
   vkCmdBeginRendering(commandBuffer, &renderingInfo);
 
   VkViewport viewport{};
@@ -506,36 +346,30 @@ void Rasterizer::RecordCommandBuffer(VkCommandBuffer commandBuffer,
                     static_cast<uint32_t>(mHeight)};
   vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-  vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          mPipelineLayout, 0, 1, &mDescriptorSets[currentFrame],
-                          0, nullptr);
+  mSkybox->Draw(commandBuffer, currentFrame);
+
   vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                     mGraphicsPipeline);
-
-  VkBuffer vertexBuffers[] = {mVertexBuffer.buffer};
-  VkDeviceSize offsets[] = {0};
-  vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
-
-  vkCmdBindIndexBuffer(commandBuffer, mIndexBuffer.buffer, 0,
-                       VK_INDEX_TYPE_UINT32);
-
-  vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(mIndices.size()), 1, 0,
-                   0, 0);
+  vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                          mPipelineLayout, 0, 1,
+                          &mUboDescriptorSets[currentFrame], 0, nullptr);
+  Draw(commandBuffer, currentFrame);
 
   vkCmdEndRendering(commandBuffer);
   // This barrier prepares the color image for presentation, we don't need to
   // care for the depth image
   InsertImageMemoryBarrier(
       commandBuffer, mColorImage.image,
-      VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_2_NONE,
-      VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 0,
-      VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+      VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+      VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+      VK_ACCESS_2_TRANSFER_READ_BIT, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+      VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
       VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1});
   InsertImageMemoryBarrier(
       commandBuffer, swapchainImage,
-      VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_2_NONE,
-      VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 0, VK_IMAGE_LAYOUT_UNDEFINED,
-      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+      VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+      VK_PIPELINE_STAGE_2_TRANSFER_BIT, 0, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+      VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
       VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1});
 
   VkExtent2D extent{.width = static_cast<uint32_t>(mWidth),
@@ -588,7 +422,7 @@ void Rasterizer::OnResize(int width, int height) {
   mDepthImage.Cleanup(mDevice, mAllocator);
 
   mColorImage.Create(
-      mDevice, mAllocator, mWidth, mHeight, 1, mSwapchainImageFormat,
+      mDevice, mAllocator, mWidth, mHeight, 1, VK_FORMAT_R8G8B8A8_UNORM,
       VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
   mDepthImage.Create(mDevice, mAllocator, mWidth, mHeight, 1, FindDepthFormat(),
                      VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
@@ -603,13 +437,8 @@ void Rasterizer::Cleanup() {
   vkDestroyPipelineCache(mDevice, mPipelineCache, nullptr);
 
   vkDestroyDescriptorPool(mDevice, mDescriptorPool, nullptr);
-  vkDestroyDescriptorSetLayout(mDevice, mDescriptorSetLayout, nullptr);
-
-  vkDestroySampler(mDevice, mTextureSampler, nullptr);
-  mTextureImage.Cleanup(mDevice, mAllocator);
-
-  mVertexBuffer.Cleanup(mAllocator);
-  mIndexBuffer.Cleanup(mAllocator);
+  vkDestroyDescriptorSetLayout(mDevice, mUboDescriptorSetLayout, nullptr);
+  vkDestroyDescriptorSetLayout(mDevice, mImageDescriptorSetLayout, nullptr);
 }
 
 }  // namespace hkr

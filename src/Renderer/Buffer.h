@@ -40,7 +40,7 @@ public:
   void Cleanup(VmaAllocator allocator);
   void* Map(VmaAllocator allocator);
   void Unmap(VmaAllocator allocator);
-  void Write(void* data, size_t size);
+  void Write(void* data, size_t size, size_t offset = 0);
 
   void* map = nullptr;
 };
@@ -72,6 +72,12 @@ public:
   ~Buffer() = default;
   Buffer(VmaAllocator allocator, VkDeviceSize size, VkBufferUsageFlags2 usage);
   void Create(VmaAllocator allocator,
+              VkDeviceSize size,
+              VkBufferUsageFlags2 usage);
+  void Create(VmaAllocator allocator,
+              VkCommandBuffer commandBuffer,
+              StagingBuffer& stagingBuffer,
+              void* data,
               VkDeviceSize size,
               VkBufferUsageFlags2 usage);
   void Create(VkDevice device,

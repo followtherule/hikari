@@ -55,7 +55,7 @@ macro(project_supports_sanitizers)
 endmacro()
 
 macro(project_setup_options)
-  option(project_ENABLE_HARDENING "Enable hardening" ON)
+  option(project_ENABLE_HARDENING "Enable hardening" OFF)
   option(project_ENABLE_COVERAGE "Enable coverage reporting" OFF)
   cmake_dependent_option(
     project_ENABLE_GLOBAL_HARDENING

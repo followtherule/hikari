@@ -5,9 +5,19 @@
 #include "Renderer/Camera.h"
 #include "Renderer/Image.h"
 #include "Renderer/Buffer.h"
+#include "Renderer/Model.h"
 #include "hikari/Core/App.h"
 
+// #define RASTERIZER_ONLY
+// #define RAYTRACER_ONLY
+#if defined(RASTERIZER_ONLY)
 #include "Renderer/Rasterizer.h"
+#elif defined(RAYTRACER_ONLY)
+#include "Renderer/Raytracer.h"
+#else
+#include "Renderer/Rasterizer.h"
+#include "Renderer/Raytracer.h"
+#endif
 
 #include <vector>
 #include <string>
@@ -49,7 +59,7 @@ private:
   void InitImGui();
   void CleanupImGui();
   void DrawFrame();
-  void DrawImGui(VkCommandBuffer commandBuffer, uint32_t imageIndex);
+  void DrawUI(VkCommandBuffer commandBuffer, uint32_t imageIndex);
   void UpdateUniformBuffer(uint32_t currentImage);
   void RecordCommandBuffer(VkCommandBuffer commandBuffer,
                            uint32_t currentFrame,
@@ -58,14 +68,11 @@ private:
   void InitCamera();
 
 private:
-  std::string mModelPath;
-  std::string mTexturePath;
-  std::string mShaderPath;
+  std::string mAssetPath;
   char* mAppName;
   GLFWwindow* mWindow;
   int mWidth = 0;
   int mHeight = 0;
-  // Vec4 mClearColor{0.2f, 0.3f, 0.3f, 0.0f};
   bool mVsync = false;
 
   VkInstance mInstance;
@@ -101,11 +108,25 @@ private:
 
   Camera mCamera;
   Mouse mMouse;
+  glTFModel* mModel;
+  Skybox* mSkybox;
+  Vec3 mLightPos = Vec3(5, 5, 5);
 
   // VkSampleCountFlagBits mMsaaSamples = VK_SAMPLE_COUNT_1_BIT;
 
-  // rasterizer
+  enum RenderMode {
+    Rasterizing,
+    Raytracing,
+  } mRenderMode = RenderMode::Rasterizing;
+
+#if defined(RASTERIZER_ONLY)
   Rasterizer* mRasterizer = nullptr;
+#elif defined(RAYTRACER_ONLY)
+  Raytracer* mRaytracer = nullptr;
+#else
+  Rasterizer* mRasterizer = nullptr;
+  Raytracer* mRaytracer = nullptr;
+#endif
 };
 
 }  // namespace hkr

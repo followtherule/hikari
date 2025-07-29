@@ -9,7 +9,7 @@ function(project_setup_dependencies)
   # already been provided to us by a parent project
 
   if(NOT TARGET fmtlib::fmtlib)
-    cpmaddpackage("gh:fmtlib/fmt#11.1.4")
+    cpmaddpackage("gh:fmtlib/fmt#11.2.0")
   endif()
 
   if(NOT TARGET spdlog::spdlog)
@@ -17,7 +17,7 @@ function(project_setup_dependencies)
       NAME
       spdlog
       VERSION
-      1.15.2
+      1.15.3
       GITHUB_REPOSITORY
       "gabime/spdlog"
       OPTIONS
@@ -67,26 +67,31 @@ function(project_setup_dependencies)
     )
   endif()
 
-  # if(NOT TARGET ktx)
-  #   cpmaddpackage(
-  #     NAME
-  #     ktx
-  #     VERSION
-  #     4.4.0
-  #     GITHUB_REPOSITORY
-  #     KhronosGroup/KTX-Software
-  #   )
-  # endif()
-  #
-  # if(NOT TARGET tinygltf)
-  #   cpmaddpackage(
-  #     NAME
-  #     tinygltf
-  #     VERSION
-  #     2.9.6
-  #     GITHUB_REPOSITORY
-  #     syoyo/tinygltf
-  #   )
-  # endif()
+  if(NOT TARGET ktx)
+    cpmaddpackage(
+      NAME
+      ktx
+      VERSION
+      4.4.0
+      GITHUB_REPOSITORY
+      KhronosGroup/KTX-Software
+      OPTIONS
+      "KTX_FEATURE_TESTS OFF"
+      "KTX_FEATURE_TOOLS OFF"
+    )
+  endif()
+
+  if(NOT TARGET tinygltf)
+    cpmaddpackage(
+      NAME
+      tinygltf
+      VERSION
+      2.9.6
+      GITHUB_REPOSITORY
+      syoyo/tinygltf
+      OPTIONS
+      "TINYGLTF_BUILD_LOADER_EXAMPLE OFF"
+    )
+  endif()
 
 endfunction()

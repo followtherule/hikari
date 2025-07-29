@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.15...3.23)
 
 set(APP_NAME hikari_app)
 
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/out/${CMAKE_BUILD_TYPE}")
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/bin/${CMAKE_BUILD_TYPE}")
 
 add_executable(${APP_NAME} sample.cpp)
 target_link_libraries(

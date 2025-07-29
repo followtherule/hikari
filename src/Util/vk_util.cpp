@@ -1,6 +1,8 @@
 #include "Util/vk_util.h"
 #include "Util/vk_debug.h"
-#include "Util/Assert.h"
+#include "Util/Filesystem.h"
+
+#include <ktx.h>
 
 namespace hkr {
 
@@ -82,7 +84,8 @@ void TransitImageLayout(VkCommandBuffer commandBuffer,
                         VkImage image,
                         VkImageLayout oldLayout,
                         VkImageLayout newLayout,
-                        uint32_t mipLevels) {
+                        uint32_t mipLevels,
+                        uint32_t arrayLayers) {
   VkImageMemoryBarrier barrier{};
   barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
   barrier.oldLayout = oldLayout;
@@ -95,7 +98,7 @@ void TransitImageLayout(VkCommandBuffer commandBuffer,
   subresourceRange.baseMipLevel = 0;
   subresourceRange.levelCount = mipLevels;
   subresourceRange.baseArrayLayer = 0;
-  subresourceRange.layerCount = 1;
+  subresourceRange.layerCount = arrayLayers;
 
   VkPipelineStageFlags2 srcStage;
   VkPipelineStageFlags2 dstStage;
@@ -163,14 +166,15 @@ void GenerateMipmaps(VkCommandBuffer commandBuffer,
     blit.srcSubresource.baseArrayLayer = 0;
     blit.srcSubresource.layerCount = 1;
     blit.srcOffsets[0] = {0, 0, 0};
-    blit.srcOffsets[1] = {mipWidth, mipHeight, 1};
+    blit.srcOffsets[1] = {std::max(mipWidth >> (i - 1), 1),
+                          std::max(mipHeight >> (i - 1), 1), 1};
     blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     blit.dstSubresource.mipLevel = i;
     blit.dstSubresource.baseArrayLayer = 0;
     blit.dstSubresource.layerCount = 1;
     blit.dstOffsets[0] = {0, 0, 0};
-    blit.dstOffsets[1] = {mipWidth > 1 ? mipWidth / 2 : 1,
-                          mipHeight > 1 ? mipHeight / 2 : 1, 1};
+    blit.dstOffsets[1] = {std::max(mipWidth >> i, 1),
+                          std::max(mipHeight >> i, 1), 1};
 
     VkBlitImageInfo2 blitInfo{};
     blitInfo.sType = VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2;
@@ -191,13 +195,6 @@ void GenerateMipmaps(VkCommandBuffer commandBuffer,
     barrier.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT;
 
     vkCmdPipelineBarrier2(commandBuffer, &dependInfo);
-
-    if (mipWidth > 1) {
-      mipWidth /= 2;
-    }
-    if (mipHeight > 1) {
-      mipHeight /= 2;
-    }
   }
 
   barrier.subresourceRange.baseMipLevel = mipLevels - 1;
@@ -214,29 +211,52 @@ void CopyBufferToImage(VkCommandBuffer commandBuffer,
                        VkImage image,
                        uint32_t width,
                        uint32_t height) {
-  VkBufferImageCopy region{};
-  region.bufferOffset = 0;
-  region.bufferRowLength = 0;
-  region.bufferImageHeight = 0;
-  region.imageSubresource;
-  region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-  region.imageSubresource.mipLevel = 0;
-  region.imageSubresource.baseArrayLayer = 0;
-  region.imageSubresource.layerCount = 1;
-  region.imageOffset = {0, 0, 0};
-  region.imageExtent = {width, height, 1};
+  VkBufferImageCopy2 copyRegion{};
+  copyRegion.sType = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2;
+  copyRegion.bufferOffset = 0;
+  copyRegion.bufferRowLength = 0;
+  copyRegion.bufferImageHeight = 0;
+  copyRegion.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  copyRegion.imageSubresource.mipLevel = 0;
+  copyRegion.imageSubresource.baseArrayLayer = 0;
+  copyRegion.imageSubresource.layerCount = 1;
+  copyRegion.imageOffset = {0, 0, 0};
+  copyRegion.imageExtent = {width, height, 1};
+  VkCopyBufferToImageInfo2 copyInfo{};
+  copyInfo.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2;
+  copyInfo.srcBuffer = buffer;
+  copyInfo.dstImage = image;
+  copyInfo.dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  copyInfo.regionCount = 1;
+  copyInfo.pRegions = &copyRegion;
+  vkCmdCopyBufferToImage2(commandBuffer, &copyInfo);
+}
 
-  vkCmdCopyBufferToImage(commandBuffer, buffer, image,
-                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+void CopyBufferToTexture(VkCommandBuffer commandBuffer,
+                         VkBuffer buffer,
+                         VkImage image,
+                         std::span<VkBufferImageCopy2> copyRegions) {
+  VkCopyBufferToImageInfo2 copyInfo{};
+  copyInfo.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2;
+  copyInfo.srcBuffer = buffer;
+  copyInfo.dstImage = image;
+  copyInfo.dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  copyInfo.regionCount = static_cast<uint32_t>(copyRegions.size());
+  copyInfo.pRegions = copyRegions.data();
+  vkCmdCopyBufferToImage2(commandBuffer, &copyInfo);
 }
 
 void CopyBufferToBuffer(VkCommandBuffer commandBuffer,
                         VkBuffer srcBuffer,
                         VkBuffer dstBuffer,
-                        VkDeviceSize size) {
+                        VkDeviceSize size,
+                        VkDeviceSize srcOffset,
+                        VkDeviceSize dstOffset) {
   VkBufferCopy2 copyRegion{};
   copyRegion.sType = VK_STRUCTURE_TYPE_BUFFER_COPY_2;
   copyRegion.size = size;
+  copyRegion.srcOffset = srcOffset;
+  copyRegion.dstOffset = dstOffset;
   VkCopyBufferInfo2 copyInfo{};
   copyInfo.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2;
   copyInfo.srcBuffer = srcBuffer;
@@ -285,6 +305,45 @@ void CopyImageToImage(VkCommandBuffer commandBuffer,
   blitInfo.pRegions = &blitRegion;
 
   vkCmdBlitImage2(commandBuffer, &blitInfo);
+}
+
+VkShaderModule CreateShaderModule(VkDevice device,
+                                  const std::vector<char>& code) {
+  VkShaderModuleCreateInfo createInfo{};
+  createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+  createInfo.codeSize = code.size();
+  createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
+
+  VkShaderModule shaderModule;
+  VK_CHECK(vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule));
+
+  return shaderModule;
+}
+
+VkShaderModule LoadShaderModule(VkDevice device,
+                                const std::string& shaderFile) {
+  auto code = ReadFile(shaderFile);
+  VkShaderModuleCreateInfo createInfo{};
+  createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+  createInfo.codeSize = code.size();
+  createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
+
+  VkShaderModule shaderModule;
+  VK_CHECK(vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule));
+
+  return shaderModule;
+}
+
+VkDeviceAddress GetBufferDeviceAddress(VkDevice device, VkBuffer buffer) {
+  VkBufferDeviceAddressInfoKHR addressInfo{};
+  addressInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+  addressInfo.buffer = buffer;
+  return vkGetBufferDeviceAddressKHR(device, &addressInfo);
+}
+
+uint32_t GetMipLevels(uint32_t width, uint32_t height) {
+  return static_cast<uint32_t>(std::floor(std::log2(std::max(width, height)))) +
+         1;
 }
 
 }  // namespace hkr

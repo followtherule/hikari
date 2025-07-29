@@ -5,12 +5,12 @@
 
 namespace hkr {
 
-std::vector<char> ReadFile(const std::string& filename) {
-  std::ifstream file(filename, std::ios::ate | std::ios::binary);
+std::vector<char> ReadFile(const std::string& fileName) {
+  std::ifstream file(fileName, std::ios::ate | std::ios::binary);
 
   HKR_ASSERT(file.is_open());
 
-  size_t fileSize = (size_t)file.tellg();
+  const size_t fileSize = (size_t)file.tellg();
   std::vector<char> buffer(fileSize);
 
   file.seekg(0);
@@ -19,6 +19,19 @@ std::vector<char> ReadFile(const std::string& filename) {
   file.close();
 
   return buffer;
+}
+
+std::string GetFilePath(const std::string& fileName) {
+  const size_t pos = fileName.find_last_of('/');
+  std::string filePath = fileName.substr(0, pos);
+  return filePath;
+}
+
+std::string GetFileExtension(const std::string& fileName) {
+  const size_t extensionPos = fileName.find_last_of(".");
+  HKR_ASSERT(extensionPos != std::string::npos);
+  std::string fileExtension = fileName.substr(extensionPos + 1);
+  return fileExtension;
 }
 
 }  // namespace hkr

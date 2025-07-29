@@ -7,9 +7,12 @@ namespace hkr {
 inline constexpr int MAX_FRAMES_IN_FLIGHT = 2;
 
 struct UniformBufferObject {
-  alignas(16) hkr::Mat4 model;
-  alignas(16) hkr::Mat4 view;
-  alignas(16) hkr::Mat4 proj;
+  // view/proj for rasterizer, view inverse/proj inverse for raytracer
+  alignas(16) Mat4 view;
+  alignas(16) Mat4 proj;
+  Vec4 viewPos;
+  Vec3 lightPos;
+  uint32_t frame = 0;  // for raytracing
 };
 
 }  // namespace hkr

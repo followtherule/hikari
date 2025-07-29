@@ -1,16 +1,12 @@
+#include "hikari/Util/Logger.h"
+#include "Renderer/Skybox.h"
 #include "Renderer/Buffer.h"
 #include "Renderer/Common.h"
-#include "Renderer/Descriptor.h"
 #include "Renderer/RenderEngine.h"
-#include "Renderer/Rasterizer.h"
-#include "hikari/Util/Logger.h"
 #include "Core/Math.h"
 #include "Util/Assert.h"
 #include "Util/vk_debug.h"
 #include "Util/vk_util.h"
-
-#include "Core/stb_image.h"
-#include "Core/tiny_obj_loader.h"
 
 #include <volk.h>
 #include <vk_mem_alloc.h>
@@ -57,39 +53,55 @@ debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
 namespace hkr {
 
 void RenderEngine::Init(const AppSettings& settings, GLFWwindow* window) {
-  mModelPath = settings.assetPath;
-  mModelPath += settings.modelRelPath;
-  mTexturePath = settings.assetPath;
-  mTexturePath += settings.textureRelPath;
-  mShaderPath = settings.assetPath;
-  mShaderPath += "spirv/";
+  mAssetPath = settings.assetPath;
   mAppName = settings.appName;
   mWidth = settings.width;
   mHeight = settings.height;
   mVsync = settings.vsync;
   mWindow = window;
 
-  // instance, physical device, logical device, graphics queue
+  // instance, physical device, logical device, graphics queue, vma allocator
   InitVulkan();
   // swapchain, swapchain images, swapchain imageviews
   CreateSwapchain();
 
   CreateCommandPool();
   CreateCommandBuffers();
-
   CreateUniformBuffers();
+  CreateSyncObjects();
+  InitImGui();
+  InitCamera();
+  mModel = new glTFModel;
+  mModel->Load(
+      mDevice, mGraphicsQueue, mCommandPool, mAllocator,
+      mAssetPath + settings.modelRelPath,
+      VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR |
+          VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT |
+          VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT);
+  mSkybox = new Skybox;
+  mSkybox->Create(mDevice, mGraphicsQueue, mCommandPool, mUniformBuffers,
+                  mAllocator, mAssetPath, settings.cubemapRelPath, 0);
 
+#if defined(RASTERIZER_ONLY)
   mRasterizer = new Rasterizer;
   mRasterizer->Init(mDevice, mPhysDevice, mGraphicsQueue, mCommandPool,
                     mUniformBuffers, mAllocator, mSwapchainImageFormat, mWidth,
-                    mHeight, mModelPath, mTexturePath, mShaderPath);
-  // mRaytracer->Init();
-
-  CreateSyncObjects();
-
-  InitImGui();
-
-  InitCamera();
+                    mHeight, mModel, mSkybox, mAssetPath);
+#elif defined(RAYTRACER_ONLY)
+  mRaytracer = new Raytracer;
+  mRaytracer->Init(mDevice, mPhysDevice, mGraphicsQueue, mCommandPool,
+                   mUniformBuffers, mAllocator, mSwapchainImageFormat, mWidth,
+                   mHeight, mModel, mSkybox, mAssetPath);
+#else
+  mRasterizer = new Rasterizer;
+  mRasterizer->Init(mDevice, mPhysDevice, mGraphicsQueue, mCommandPool,
+                    mUniformBuffers, mAllocator, mSwapchainImageFormat, mWidth,
+                    mHeight, mModel, mSkybox, mAssetPath);
+  mRaytracer = new Raytracer;
+  mRaytracer->Init(mDevice, mPhysDevice, mGraphicsQueue, mCommandPool,
+                   mUniformBuffers, mAllocator, mSwapchainImageFormat, mWidth,
+                   mHeight, mModel, mSkybox, mAssetPath);
+#endif
 }
 
 void RenderEngine::InitVulkan() {
@@ -99,13 +111,13 @@ void RenderEngine::InitVulkan() {
   vkb::InstanceBuilder instance_builder;
   instance_builder.set_app_name(mAppName)
       .set_engine_name("hikari engine")
-      .require_api_version(1, 4, 0)
 #ifdef ENABLE_VALIDATION_LAYER
       .request_validation_layers()
 #endif
 #ifdef HKR_DEBUG
-      .set_debug_callback(&debugCallback);
+      .set_debug_callback(&debugCallback)
 #endif
+      .require_api_version(1, 4, 0);
 
   // query and enable instance extension
   auto system_info_ret = vkb::SystemInfo::get_system_info();
@@ -160,6 +172,7 @@ void RenderEngine::InitVulkan() {
   // core feature
   VkPhysicalDeviceFeatures required_features{};
   required_features.samplerAnisotropy = true;
+  required_features.shaderInt64 = true;
   selector.set_required_features(required_features);
   // 1.2 feature
   VkPhysicalDeviceVulkan12Features features12{};
@@ -169,6 +182,7 @@ void RenderEngine::InitVulkan() {
   features12.descriptorBindingPartiallyBound = true;
   features12.descriptorBindingVariableDescriptorCount = true;
   features12.runtimeDescriptorArray = true;
+  features12.shaderSampledImageArrayNonUniformIndexing = true;
   selector.set_required_features_12(features12);
   // 1.3 feature
   VkPhysicalDeviceVulkan13Features features13{};
@@ -176,12 +190,27 @@ void RenderEngine::InitVulkan() {
   features13.dynamicRendering = true;
   features13.synchronization2 = true;
   selector.set_required_features_13(features13);
-  // extension feature
-  // VkPhysicalDeviceDescriptorIndexingFeatures descriptor_indexing_features{};
-  // descriptor_indexing_features.sType =
-  //     VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES;
-  // descriptor_indexing_features.descriptorBindingPartiallyBound = true;
-  // selector.add_required_extension_features(descriptor_indexing_features);
+  // extension features
+  // VkPhysicalDeviceBufferDeviceAddressFeatures bufferDeviceAddressFeatures{};
+  VkPhysicalDeviceRayTracingPipelineFeaturesKHR raytracingPipelineFeatures{};
+  VkPhysicalDeviceAccelerationStructureFeaturesKHR asFeatures{};
+  // bufferDeviceAddressFeatures.sType =
+  //     VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
+  // bufferDeviceAddressFeatures.bufferDeviceAddress = VK_TRUE;
+
+  raytracingPipelineFeatures.sType =
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
+  raytracingPipelineFeatures.rayTracingPipeline = VK_TRUE;
+  // raytracingPipelineFeatures.pNext = &bufferDeviceAddressFeatures;
+
+  asFeatures.sType =
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+  asFeatures.accelerationStructure = VK_TRUE;
+  // asFeatures.pNext = &raytracingPipelineFeatures;
+  selector
+      // .add_required_extension_features(bufferDeviceAddressFeatures)
+      .add_required_extension_features(raytracingPipelineFeatures)
+      .add_required_extension_features(asFeatures);
 
   auto phys_ret = selector.select();
   HKR_ASSERT(phys_ret);
@@ -207,7 +236,8 @@ void RenderEngine::InitVulkan() {
 
   // 5. setup vma allocator
   VmaAllocatorCreateInfo allocatorInfo{};
-  allocatorInfo.flags = VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT;
+  allocatorInfo.flags = VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT |
+                        VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
   allocatorInfo.vulkanApiVersion = VK_API_VERSION_1_4;
   allocatorInfo.physicalDevice = mPhysDevice;
   allocatorInfo.device = mDevice;
@@ -220,7 +250,8 @@ void RenderEngine::InitVulkan() {
 }  // namespace hkr
 
 void RenderEngine::CreateSwapchain() {
-  mSwapchainImageFormat = VK_FORMAT_B8G8R8A8_SRGB;
+  // mSwapchainImageFormat = VK_FORMAT_R8G8B8A8_UNORM;
+  mSwapchainImageFormat = VK_FORMAT_R8G8B8A8_SRGB;
   vkb::SwapchainBuilder swapchain_builder{mPhysDevice, mDevice, mSurface};
   swapchain_builder
       .set_desired_format(
@@ -264,7 +295,6 @@ void RenderEngine::RecreateSwapchain() {
   HKR_ASSERT(swap_ret);
   vkb::Swapchain swapchain = swap_ret.value();
 
-  mRasterizer->OnResize(mWidth, mHeight);
   for (auto imageView : mSwapchainImageViews) {
     vkDestroyImageView(mDevice, imageView, nullptr);
   }
@@ -274,6 +304,15 @@ void RenderEngine::RecreateSwapchain() {
   mSwapchain = swapchain.swapchain;
   mSwapchainImages = swapchain.get_images().value();
   mSwapchainImageViews = swapchain.get_image_views().value();
+
+#if defined(RASTERIZER_ONLY)
+  mRasterizer->OnResize(mWidth, mHeight);
+#elif defined(RAYTRACER_ONLY)
+  mRaytracer->OnResize(mWidth, mHeight);
+#else
+  mRasterizer->OnResize(mWidth, mHeight);
+  mRaytracer->OnResize(mWidth, mHeight);
+#endif
 }
 
 void RenderEngine::CreateCommandPool() {
@@ -541,13 +580,33 @@ void RenderEngine::DrawFrame() {
 
 void RenderEngine::UpdateUniformBuffer(uint32_t currentImage) {
   UniformBufferObject ubo{};
-  ubo.model = Mat4(1.0);
-  ubo.model = glm::rotate(ubo.model, glm::radians(-90.0f), {0, 1, 0});
-  ubo.model = glm::rotate(ubo.model, glm::radians(-90.0f), {1, 0, 0});
-
-  ubo.view = mCamera.GetView();
-  ubo.proj = mCamera.GetProj();
-
+  ubo.lightPos = {-mLightPos[0], mLightPos[1], -mLightPos[2]};
+#if defined(RASTERIZER_ONLY)
+  // ubo.model = Mat4(1.0);
+  // ubo.model = glm::rotate(ubo.model, glm::radians(-90.0f), {0, 1, 0});
+  // ubo.model = glm::rotate(ubo.model, glm::radians(-90.0f), {1, 0, 0});
+  ubo.view = mCamera.view;
+  ubo.proj = mCamera.proj;
+  ubo.viewPos = Vec4(mCamera.position, 0.0f);
+#elif defined(RAYTRACER_ONLY)
+  ubo.view = glm::inverse(mCamera.view);
+  ubo.proj = glm::inverse(mCamera.proj);
+  ubo.frame = ubo.frame + 1;
+#else
+  if (mRenderMode == RenderMode::Rasterizing) {
+    ubo.view = mCamera.view;
+    ubo.proj = mCamera.proj;
+  } else {
+    ubo.view = glm::inverse(mCamera.view);
+    ubo.proj = glm::inverse(mCamera.proj);
+  }
+  // ubo.view = mCamera.GetView();
+  // ubo.proj = mCamera.GetProj();
+  // ubo.viewInverse = glm::inverse(mCamera.GetView());
+  // ubo.projInverse = glm::inverse(mCamera.GetProj());
+  ubo.viewPos = Vec4(mCamera.position, 0.0f);
+  ubo.frame = ubo.frame + 1;
+#endif
   mUniformBuffers[currentImage].Write(&ubo, sizeof(ubo));
 }
 
@@ -557,15 +616,30 @@ void RenderEngine::RecordCommandBuffer(VkCommandBuffer commandBuffer,
   VkCommandBufferBeginInfo beginInfo{};
   beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
   VK_CHECK(vkBeginCommandBuffer(commandBuffer, &beginInfo));
+
+#if defined(RASTERIZER_ONLY)
   mRasterizer->RecordCommandBuffer(commandBuffer, currentFrame,
                                    mSwapchainImages[imageIndex]);
+#elif defined(RAYTRACER_ONLY)
+  mRaytracer->RecordCommandBuffer(commandBuffer, currentFrame,
+                                  mSwapchainImages[imageIndex]);
+#else
+  if (mRenderMode == RenderMode::Rasterizing) {
+    mRasterizer->RecordCommandBuffer(commandBuffer, currentFrame,
+                                     mSwapchainImages[imageIndex]);
+  } else if (mRenderMode == RenderMode::Raytracing) {
+    mRaytracer->RecordCommandBuffer(commandBuffer, currentFrame,
+                                    mSwapchainImages[imageIndex]);
+  }
+#endif
+
   InsertImageMemoryBarrier(
       commandBuffer, mSwapchainImages[imageIndex],
       VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_2_NONE,
       VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 0,
       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
       VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1});
-  DrawImGui(commandBuffer, imageIndex);
+  DrawUI(commandBuffer, imageIndex);
   InsertImageMemoryBarrier(
       commandBuffer, mSwapchainImages[imageIndex],
       VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_2_NONE,
@@ -587,66 +661,47 @@ void RenderEngine::Render() {
   mCamera.Update(frameTimer);
 }
 
-void RenderEngine::DrawImGui(VkCommandBuffer commandBuffer,
-                             uint32_t imageIndex) {
+void RenderEngine::DrawUI(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
   // Start the Dear ImGui frame
   ImGui_ImplVulkan_NewFrame();
   ImGui_ImplGlfw_NewFrame();
   ImGui::NewFrame();
 
-  // 1. Show the big demo window (Most of the sample code is in
-  // ImGui::ShowDemoWindow()! You can browse its code to learn more about Dear
-  // ImGui!).
-
-  static bool show_demo_window = true;
-  static bool show_another_window = true;
-  static ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
+  static bool show_demo_window = false;
   ImGuiIO& io = ImGui::GetIO();
-  (void)io;
   if (show_demo_window) ImGui::ShowDemoWindow(&show_demo_window);
 
-  // 2. Show a simple window that we create ourselves. We use a Begin/End pair
-  // to create a named window.
   {
-    static float f = 0.0f;
     static int counter = 0;
 
-    ImGui::Begin("Hello, world!");  // Create a window called "Hello, world!"
-                                    // and append into it.
+    ImGui::Begin("Settings");
 
-    ImGui::Text("This is some useful text.");  // Display some text (you can
-                                               // use a format strings too)
-    ImGui::Checkbox(
-        "Demo Window",
-        &show_demo_window);  // Edit bools storing our window open/close state
-    ImGui::Checkbox("Another Window", &show_another_window);
+#if !defined(RASTERIZER_ONLY) && !defined(RAYTRACER_ONLY)
+    ImGui::SliderInt("Render Mode", (int*)&mRenderMode, 0, 1);
+#endif
+    // ImGui::ColorEdit3(
+    //     "clear color",
+    //     (float*)&clear_color);  // Edit 3 floats representing a color
+    ImGui::SliderFloat3("light position", (float*)&mLightPos, -10.0, 10.0f);
+    // camera settings
+    ImGui::SliderFloat("camera move speed", &mCamera.moveSpeed, 0.0f, 5.0f);
+    ImGui::SliderFloat("camera rotate speed", &mCamera.rotateSpeed, 0.0f, 1.0f);
+    if (ImGui::SliderFloat("camera fov", &mCamera.fov, 0.0f, 120.0f)) {
+      mCamera.MakeProj();
+    }
+    // ImGui::SliderFloat("camera znear", &mCamera.near, 0.0f, 10.0f);
+    // ImGui::SliderFloat("camera zfar", &mCamera.far, 0.0f, 1000.0f);
+    // ImGui::SliderFloat("camera aspect", &mCamera.aspect, 0.0f, 2.0f);
 
-    ImGui::SliderFloat("float", &f, 0.0f,
-                       1.0f);  // Edit 1 float using a slider from 0.0f to 1.0f
-    ImGui::ColorEdit3(
-        "clear color",
-        (float*)&clear_color);  // Edit 3 floats representing a color
-
-    if (ImGui::Button("Button"))  // Buttons return true when clicked (most
-                                  // widgets return true when edited/activated)
-      counter++;
-    ImGui::SameLine();
-    ImGui::Text("counter = %d", counter);
+    // if (ImGui::Button("Button"))  // Buttons return true when clicked (most
+    //                               // widgets return true when
+    //                               edited/activated)
+    //   counter++;
+    // ImGui::SameLine();
+    // ImGui::Text("counter = %d", counter);
 
     ImGui::Text("Application average %.3f ms/frame (%.1f FPS)",
                 1000.0f / io.Framerate, io.Framerate);
-    ImGui::End();
-  }
-
-  // 3. Show another simple window.
-  if (show_another_window) {
-    ImGui::Begin(
-        "Another Window",
-        &show_another_window);  // Pass a pointer to our bool variable (the
-                                // window will have a closing button that will
-                                // clear the bool when clicked)
-    ImGui::Text("Hello from another window!");
-    if (ImGui::Button("Close Me")) show_another_window = false;
     ImGui::End();
   }
 
@@ -713,8 +768,24 @@ void RenderEngine::Cleanup() {
 
   CleanupImGui();
 
+#if defined(RASTERIZER_ONLY)
   mRasterizer->Cleanup();
   delete mRasterizer;
+#elif defined(RAYTRACER_ONLY)
+  mRaytracer->Cleanup();
+  delete mRaytracer;
+#else
+  mRasterizer->Cleanup();
+  delete mRasterizer;
+  mRaytracer->Cleanup();
+  delete mRaytracer;
+#endif
+
+  mModel->Cleanup();
+  delete mModel;
+  mSkybox->Cleanup(mAllocator);
+  delete mSkybox;
+
   vkDestroyDescriptorPool(mDevice, mImGuiDescriptorPool, nullptr);
   for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
     mUniformBuffers[i].Unmap(mAllocator);
@@ -749,12 +820,14 @@ void RenderEngine::Cleanup() {
 }
 
 void RenderEngine::InitCamera() {
-  mCamera.SetMoveSpeed(1.0f);
-  mCamera.SetRotateSpeed(0.2f);
+  mCamera.position = {0.0, 0.0, 1.0};
+  mCamera.moveSpeed = 0.8f;
+  mCamera.rotateSpeed = 0.2f;
   mCamera.SetPerspective(60.0f, (float)mWidth / (float)mHeight, 0.1f, 256.0f);
-
-  // mCamera.SetRotation({-7.75f, 150.25f, 0.0f});
-  // mCamera.SetPosition({0.7f, 0.1f, 1.7f});
+  mCamera.MakeView();
+  for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+    UpdateUniformBuffer(i);
+  }
 }
 
 void RenderEngine::OnKeyEvent(int key, int action) {

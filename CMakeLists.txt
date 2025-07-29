@@ -6,7 +6,7 @@ cmake_minimum_required(VERSION 3.21)
 
 # Only set the cxx_standard if it is not set by someone else
 if(NOT DEFINED CMAKE_CXX_STANDARD)
-  set(CMAKE_CXX_STANDARD 23)
+  set(CMAKE_CXX_STANDARD 20)
 endif()
 
 # strongly encouraged to enable this globally to avoid conflicts between
@@ -22,6 +22,7 @@ project(
 
 include(cmake/PreventInSourceBuilds.cmake)
 include(ProjectOptions.cmake)
+option(BUILD_SHARED_LIBS "Build using shared libraries" ON)
 
 project_setup_options()
 

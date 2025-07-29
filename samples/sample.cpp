@@ -1,4 +1,3 @@
-// #include <hikari/hikari.hpp>
 #include <hikari/Core/App.h>
 #include <hikari/Core/EntryPoint.h>
 
@@ -9,8 +8,8 @@ public:
   Sample() {
     settings.appName = sample::gAppName;
     settings.assetPath = sample::gAssetPath;
-    settings.modelRelPath = "models/viking_room.obj";
-    settings.textureRelPath = "textures/viking_room.png";
+    settings.modelRelPath = "models/FlightHelmet/glTF/FlightHelmet.gltf";
+    settings.cubemapRelPath = "textures/table_mountain_1_puresky.ktx2";
     settings.width = sample::gWidth;
     settings.height = sample::gHeight;
     settings.vsync = sample::gVsync;

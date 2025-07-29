@@ -62,7 +62,9 @@ void MappableBuffer::Unmap(VmaAllocator allocator) {
   vmaUnmapMemory(allocator, allocation);
 }
 
-void MappableBuffer::Write(void* data, size_t size) { memcpy(map, data, size); }
+void MappableBuffer::Write(void* data, size_t size, size_t offset) {
+  memcpy((char*)map + offset, data, size);
+}
 
 UniformBuffer::UniformBuffer(VmaAllocator allocator, VkDeviceSize size) {
   Create(allocator, size);
@@ -108,6 +110,22 @@ void Buffer::Create(VmaAllocator allocator,
                     VkBufferUsageFlags2 usage) {
   BufferBase::Create(allocator, 0, size,
                      VK_BUFFER_USAGE_2_TRANSFER_DST_BIT | usage);
+}
+
+void Buffer::Create(VmaAllocator allocator,
+                    VkCommandBuffer commandBuffer,
+                    StagingBuffer& stagingBuffer,
+                    void* data,
+                    VkDeviceSize size,
+                    VkBufferUsageFlags2 usage) {
+  stagingBuffer.Create(allocator, size);
+  stagingBuffer.Map(allocator);
+  stagingBuffer.Write(data, size);
+  stagingBuffer.Unmap(allocator);
+  BufferBase::Create(allocator, 0, size,
+                     VK_BUFFER_USAGE_2_TRANSFER_DST_BIT | usage);
+
+  CopyBufferToBuffer(commandBuffer, stagingBuffer.buffer, buffer, size);
 }
 
 void Buffer::Create(VkDevice device,
