@@ -7,7 +7,6 @@
 #include "Util/vk_debug.h"
 #include "Util/vk_util.h"
 
-#include <unistd.h>
 #include <cstddef>
 #include <cstdint>
 

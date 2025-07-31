@@ -189,11 +189,12 @@ void glTFModel::LoadImages(const tinygltf::Model& model) {
   for (size_t i = 0; i < imageCount; i++) {
     const auto& image = model.images[i];
     glTFImage& newImage = images[i];
-    if (image.uri.empty() || image.width == 0 || image.height == 0 ||
-        image.component == -1) {
-      CreateDefaultImage(mDevice, mQueue, mCommandPool, mAllocator, newImage);
-      continue;
-    }
+
+    // if (image.uri.empty() || image.width == 0 || image.height == 0 ||
+    //     image.component == -1) {
+    //   CreateDefaultImage(mDevice, mQueue, mCommandPool, mAllocator,
+    //   newImage); continue;
+    // }
 
     if (!image.uri.empty() && GetFileExtension(image.uri) == "ktx2") {
       const std::string fileName = mFilePath + "/" + image.uri;

@@ -3,20 +3,16 @@ add_subdirectory(volk)
 
 # imgui
 file(GLOB imgui_src
-  "${CMAKE_CURRENT_SOURCE_DIR}/imgui/*.h"
   "${CMAKE_CURRENT_SOURCE_DIR}/imgui/*.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/imgui/backends/imgui_impl_glfw.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/imgui/backends/imgui_impl_vulkan.cpp"
 )
-add_library(imgui OBJECT ${imgui_src})
-target_include_directories(
-  imgui
-  PUBLIC
+set(imgui_src ${imgui_src} PARENT_SCOPE)
+set(imgui_include
   ${CMAKE_CURRENT_SOURCE_DIR}/imgui
-  ${CMAKE_CURRENT_SOURCE_DIR}/imgui/backends
-  PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR}/volk
+  PARENT_SCOPE
 )
-target_compile_definitions(imgui PUBLIC
-  IMGUI_IMPL_VULKAN_USE_VOLK
+set(imgui_backends_include
+  ${CMAKE_CURRENT_SOURCE_DIR}/imgui/backends
+  PARENT_SCOPE
 )

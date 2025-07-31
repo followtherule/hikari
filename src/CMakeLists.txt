@@ -1,32 +1,5 @@
 include(GenerateExportHeader)
 
-# add_library(
-#   hikari
-#   SHARED
-#   Core/App.cpp
-#   Core/Window.cpp
-#
-#   Renderer/Buffer.cpp
-#   Renderer/Cube.cpp
-#   Renderer/Descriptor.cpp
-#   Renderer/Image.cpp
-#   Renderer/Model.cpp
-#   Renderer/Pipeline.cpp
-#   Renderer/Rasterizer.cpp
-#   Renderer/Raytracer.cpp
-#   Renderer/RenderEngine.cpp
-#   Renderer/Skybox.cpp
-#   Renderer/tiny_gltf_impl.cpp
-#   Renderer/vk_mem_alloc.cpp
-#   Renderer/volk_impl.cpp
-#
-#   Util/Filesystem.cpp
-#   Util/Logger.cpp
-#   Util/vk_util.cpp
-#
-#   $<TARGET_OBJECTS:imgui>
-# )
-
 add_library(hikari)
 
 target_sources(
@@ -53,35 +26,21 @@ target_sources(
   Util/Logger.cpp
   Util/vk_util.cpp
 
-  $<TARGET_OBJECTS:imgui>
+  ${imgui_src}
 )
 
 target_sources(
   hikari
   PRIVATE
   FILE_SET private_headers TYPE HEADERS
-  FILES
-  Core/Math.h
-  Core/Mouse.h
-  Core/Window.h
-
-  Renderer/Buffer.h
-  Renderer/Camera.h
-  Renderer/Common.h
-  Renderer/Cube.h
-  Renderer/Descriptor.h
-  Renderer/Image.h
-  Renderer/Model.h
-  Renderer/Pipeline.h
-  Renderer/Rasterizer.h
-  Renderer/Raytracer.h
-  Renderer/RenderEngine.h
-  Renderer/Skybox.h
-
-  Util/Assert.h
-  Util/Filesystem.h
-  Util/vk_debug.h
-  Util/vk_util.h
+  BASE_DIRS
+  ${CMAKE_CURRENT_SOURCE_DIR}
+  FILE_SET imgui_include TYPE HEADERS
+  BASE_DIRS
+  ${imgui_include}
+  FILE_SET imgui_backends_include TYPE HEADERS
+  BASE_DIRS
+  ${imgui_backends_include}
 )
 
 generate_export_header(
@@ -112,7 +71,6 @@ target_link_libraries(
   project_options
   project_warnings
   volk_headers
-  imgui
 )
 
 target_link_system_libraries(
@@ -170,6 +128,7 @@ target_compile_definitions(
   GLFW_INCLUDE_NONE
   GLFW_INCLUDE_VULKAN
   VK_NO_PROTOTYPES
+  IMGUI_IMPL_VULKAN_USE_VOLK
   VMA_STATIC_VULKAN_FUNCTIONS=0
   VMA_DYNAMIC_VULKAN_FUNCTIONS=0
   $<$<CONFIG:Debug>:HKR_DEBUG>

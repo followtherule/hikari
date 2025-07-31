@@ -8,7 +8,7 @@ public:
   Sample() {
     settings.appName = sample::gAppName;
     settings.assetPath = sample::gAssetPath;
-    settings.modelRelPath = "models/FlightHelmet/glTF/FlightHelmet.gltf";
+    settings.modelRelPath = "models/FlightHelmet/glTF/FlightHelmet.glb";
     settings.cubemapRelPath = "textures/table_mountain_1_puresky.ktx2";
     settings.width = sample::gWidth;
     settings.height = sample::gHeight;
